@@ -1,0 +1,25 @@
+/** Central route path definitions. Keeps links type-safe and refactorable. */
+export const paths = {
+  home: '/',
+  products: '/products',
+  product: (id: string) => `/products/${id}`,
+  seller: (id: string) => `/sellers/${id}`,
+  login: '/login',
+  register: '/register',
+  verifyEmail: '/verify-email',
+  forgotPassword: '/forgot-password',
+  resetPassword: '/reset-password',
+  checkout: '/checkout',
+  orders: '/account/orders',
+  order: (id: string) => `/account/orders/${id}`,
+  orderCheckout: (id: string) => `/account/orders/${id}/checkout`,
+  account: {
+    root: '/account',
+    profile: '/account/profile',
+    password: '/account/password',
+    addresses: '/account/addresses',
+    notifications: '/account/notifications',
+    bids: '/account/bids',
+    offers: '/account/offers',
+  },
+} as const;

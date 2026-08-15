@@ -1,0 +1,84 @@
+export const HTTP_METHODS = [
+  'get',
+  'post',
+  'put',
+  'patch',
+  'delete',
+  'options',
+  'head',
+  'trace',
+];
+
+export const EXPECTED_ROUTE_INVENTORY = [
+  'GET /health',
+  'GET /ready',
+  'GET /api/v1/auth/csrf-token',
+  'POST /api/v1/auth/register',
+  'POST /api/v1/auth/verify-email',
+  'POST /api/v1/auth/resend-verification',
+  'POST /api/v1/auth/login',
+  'POST /api/v1/auth/refresh',
+  'POST /api/v1/auth/logout',
+  'GET /api/v1/users/me',
+  'PATCH /api/v1/users/me',
+  'PATCH /api/v1/users/me/password',
+  'GET /api/v1/addresses',
+  'POST /api/v1/addresses',
+  'PATCH /api/v1/addresses/{addressId}',
+  'DELETE /api/v1/addresses/{addressId}',
+  'PATCH /api/v1/addresses/{addressId}/default',
+  'GET /api/v1/notifications',
+  'GET /api/v1/notifications/unread-count',
+  'PATCH /api/v1/notifications/read-all',
+  'PATCH /api/v1/notifications/{notificationId}/read',
+  'GET /api/v1/categories',
+  'GET /api/v1/categories/{categoryId}',
+  'GET /api/v1/products',
+  'GET /api/v1/products/{productId}',
+  'GET /api/v1/sellers/{sellerId}',
+  'GET /api/v1/products/{productId}/reviews',
+  'POST /api/v1/products/{productId}/reviews',
+  'PATCH /api/v1/product-reviews/{reviewId}',
+  'DELETE /api/v1/product-reviews/{reviewId}',
+  'GET /api/v1/sellers/{sellerId}/feedbacks',
+  'POST /api/v1/orders/{orderId}/seller-feedback',
+  'PATCH /api/v1/seller-feedbacks/{feedbackId}',
+  'DELETE /api/v1/seller-feedbacks/{feedbackId}',
+  'GET /api/v1/cart',
+  'DELETE /api/v1/cart',
+  'POST /api/v1/cart/items',
+  'PATCH /api/v1/cart/items/{productId}',
+  'DELETE /api/v1/cart/items/{productId}',
+  'POST /api/v1/cart/sync',
+  'POST /api/v1/coupons/validate',
+  'POST /api/v1/checkout/preview',
+  'POST /api/v1/checkout',
+  'GET /api/v1/checkout-groups/{checkoutGroupId}',
+  'GET /api/v1/orders',
+  'GET /api/v1/orders/{orderId}',
+  'POST /api/v1/orders/{orderId}/checkout',
+  'POST /api/v1/payments/paypal/create',
+  'POST /api/v1/payments/paypal/capture',
+  'POST /api/v1/payments/cod/confirm',
+  'POST /api/v1/returns',
+  'GET /api/v1/returns',
+  'GET /api/v1/returns/{returnId}',
+];
+
+export const OUT_OF_SCOPE_PATH_FRAGMENTS = ['admin'];
+
+export const getRouteInventory = (document) =>
+  Object.entries(document.paths).flatMap(([path, pathItem]) =>
+    HTTP_METHODS.filter((method) => pathItem[method]).map(
+      (method) => `${method.toUpperCase()} ${path}`,
+    ),
+  );
+
+export const getOperations = (document) =>
+  Object.entries(document.paths).flatMap(([path, pathItem]) =>
+    HTTP_METHODS.filter((method) => pathItem[method]).map((method) => ({
+      method,
+      path,
+      operation: pathItem[method],
+    })),
+  );

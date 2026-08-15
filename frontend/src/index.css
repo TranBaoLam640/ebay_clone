@@ -1,0 +1,226 @@
+@import 'tailwindcss';
+@import './theme.css';
+
+/* Base element styling driven by semantic theme tokens. */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* `clip` (not `hidden`) blocks sideways panning without turning <html> into
+       a scroll container — which would re-anchor the sticky header and stop it
+       from sticking. */
+    overflow-x: clip;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    /* Never allow horizontal scroll — a single too-wide element shouldn't let
+       the whole page pan sideways and appear "cropped" on mobile. `clip` keeps
+       the sticky header working (no scroll-container ancestor). */
+    overflow-x: clip;
+    background-color: var(--c-bg);
+    color: var(--c-text);
+    font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition:
+      background-color 0.3s ease,
+      color 0.3s ease;
+  }
+
+  /* Never paint the default browser outline on mouse/touch interaction — that's
+     the "ugly black box" around clicked buttons. */
+  *:focus {
+    outline: none;
+  }
+
+  /* Keyboard navigation still gets a visible ring, but a soft coral one (not a
+     harsh hard outline). Components may override with their own focus-visible
+     ring; those win via specificity. */
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--c-bg), 0 0 0 4px color-mix(in srgb, var(--c-accent) 55%, transparent);
+    border-radius: 6px;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* Every interactive control shows a pointer cursor. Covers native buttons,
+     links, role="button", labels, selects and summaries without repeating the
+     class on each element. Disabled controls fall back to not-allowed. */
+  button,
+  a[href],
+  label,
+  select,
+  summary,
+  [role='button'],
+  [role='tab'],
+  [role='link'] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+}
+
+/* Custom scrollbar — themed via CSS variables, matches DESIGN.md restraint. */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 9999px;
+    border: 2px solid var(--c-bg);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}
+
+/* Lenis smooth-scroll required styles. */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/* Reduced-motion: disable smooth scroll + collapse transitions. */
+@media (prefers-reduced-motion: reduce) {
+  html.lenis {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Spinner keyframe used by <Icon spin>. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Toast entrance (Sonner-style): fade + slide from the top edge with a subtle
+   overshoot so it settles rather than snaps. */
+@keyframes toast-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.96);
+  }
+  60% {
+    transform: translateY(1px) scale(1.004);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.toast-enter {
+  animation: toast-in 0.3s cubic-bezier(0.21, 1.02, 0.73, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-enter {
+    animation: none;
+  }
+}
+
+/* Utility: reveal targets start hidden, GSAP animates them in.
+   When reduced motion is on, force them visible (no reliance on JS). */
+.reveal-init {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-init {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Decorative helpers for the modern visual language. */
+@layer utilities {
+  /* Gradient brand text. */
+  .text-gradient {
+    background-image: linear-gradient(120deg, var(--grad-b), var(--grad-c));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Subtle dotted grid background for hero / sections. */
+  .bg-dot-grid {
+    background-image: radial-gradient(var(--c-border) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+
+  /* Frosted glass surface for the sticky header. */
+  .glass {
+    background-color: color-mix(in srgb, var(--c-surface) 72%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+  }
+
+  /* Hide the scrollbar on horizontal mobile tab strips while keeping scroll. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-lift {
+    box-shadow: var(--shadow-lift);
+  }
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+}
+
+/* Slow floating drift for decorative blobs. */
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(20px, -24px);
+  }
+}

@@ -1,0 +1,17 @@
+# OPTIONAL — exposes MongoDB on <node-ip>:30017 for external clients (Compass, local dev).
+# Security: this puts Mongo on the public internet. Firewall 30017 to trusted IPs only,
+# and connect with directConnection=true (single-node replica set advertises an internal FQDN).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-external
+  namespace: sbay
+spec:
+  type: NodePort
+  selector:
+    app: mongodb
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+      nodePort: 30017

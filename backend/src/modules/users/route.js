@@ -1,0 +1,10 @@
+import { Router } from 'express';
+import { authenticate } from '../../common/middleware/authenticate.js';
+import { validate } from '../../common/middleware/validate.js';
+import { updateSchema, passwordSchema } from './validation.js';
+import * as c from './controller.js';
+export const userRoute = Router();
+userRoute.use(authenticate);
+userRoute.get('/me', c.getMe);
+userRoute.patch('/me', validate(updateSchema), c.patchMe);
+userRoute.patch('/me/password', validate(passwordSchema), c.password);

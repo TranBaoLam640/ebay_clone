@@ -1,0 +1,124 @@
+/*
+ * SBay theme — streetwear/premium palette, 60-30-10.
+ *   60% neutral canvas (white + light gray) → bg / surface / borders
+ *   30% charcoal navy (#1E293B)             → header, nav, links, headings, banners
+ *   10% coral CTA (#FF385C)                  → action buttons (login, buy, add-to-cart)
+ *
+ * Two distinct accents by role:
+ *   - primary  = charcoal navy — the brand/structure color (calm, premium).
+ *   - accent   = coral         — every call-to-action; pops on light AND dark.
+ *   - rating   = amber         — star ratings / sale prices ONLY, kept scarce.
+ * Themes swap via the `.dark` class on <html>.
+ */
+
+@theme {
+  --color-primary: var(--c-primary);
+  --color-primary-hover: var(--c-primary-hover);
+  --color-on-primary: var(--c-on-primary);
+  --color-accent: var(--c-accent);
+  --color-on-accent: var(--c-on-accent);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-rating: var(--c-rating);
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-text: var(--c-text);
+  --color-muted: var(--c-muted);
+  --color-border: var(--c-border);
+  --color-success: var(--c-success);
+  --color-danger: var(--c-danger);
+
+  --color-primary-soft: var(--c-primary-soft);
+  --color-accent-soft: var(--c-accent-soft);
+
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* Layered elevation — soft, low-opacity, cool-tinted. */
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.05);
+  --shadow-card: 0 2px 8px rgba(15, 23, 42, 0.07);
+  --shadow-lift: 0 12px 32px rgba(15, 23, 42, 0.14);
+  /* Glow follows the coral CTA so hovered actions feel alive. */
+  --shadow-glow: 0 8px 26px rgba(225, 29, 72, 0.26);
+}
+
+/* Light theme (default) — white + light-gray canvas, charcoal structure. */
+:root {
+  /* Brand / structure — charcoal navy. */
+  --c-primary: #1e293b;
+  --c-primary-hover: #0f172a;
+  --c-on-primary: #ffffff;
+  --c-primary-soft: #eef1f6;
+
+  /* CTA — softened coral/rose so it reads energetic without glaring. */
+  --c-accent: #e11d48;
+  --c-accent-hover: #be123c;
+  --c-on-accent: #ffffff;
+  --c-accent-soft: #ffe4ea;
+
+  /* Rating / sale price — amber, scarce. */
+  --c-rating: #f59e0b;
+
+  --c-bg: #f8fafc;
+  --c-surface: #ffffff;
+  --c-surface-2: #eef2f7;
+  --c-text: #0f172a;
+  --c-muted: #64748b;
+  --c-border: #e2e8f0;
+
+  /* State colors — muted, used only for status. */
+  --c-success: #16a34a;
+  --c-danger: #dc2626;
+
+  /* Gradient anchors — charcoal navy, light→deep. */
+  --grad-a: #334155;
+  --grad-b: #1e293b;
+  --grad-c: #0f172a;
+
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+
+  color-scheme: light;
+}
+
+/* Dark theme — deep charcoal canvas, coral CTA stays vivid. */
+.dark {
+  --c-primary: #f8fafc;
+  --c-primary-hover: #ffffff;
+  --c-on-primary: #0f172a;
+  --c-primary-soft: #24304a;
+
+  /* Brighter, softer coral for legibility on the dark canvas. */
+  --c-accent: #f43f5e;
+  --c-accent-hover: #fb7185;
+  --c-on-accent: #0f172a;
+  --c-accent-soft: #331722;
+
+  --c-rating: #fbbf24;
+
+  --c-bg: #0f172a;
+  --c-surface: #1e293b;
+  --c-surface-2: #273449;
+  --c-text: #f8fafc;
+  --c-muted: #94a3b8;
+  --c-border: #334155;
+
+  --c-success: #4ade80;
+  --c-danger: #f87171;
+
+  /* On the dark canvas the charcoal brand can't be a background, so gradient
+     banners lean on the coral→deep-charcoal blend for contrast. */
+  --grad-a: #334155;
+  --grad-b: #1e293b;
+  --grad-c: #0b0f17;
+
+  --scrollbar-thumb: #334155;
+  --scrollbar-thumb-hover: #475569;
+
+  color-scheme: dark;
+}

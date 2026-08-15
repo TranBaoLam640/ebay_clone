@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: sbay
+  labels:
+    app: backend
+  annotations:
+    # Keel auto-updates this Deployment when a newer build-<timestamp> tag appears in GHCR
+    # (pull-based; no SSH). Detecting by tag NAME is reliable, unlike :latest digest-diffing.
+    keel.sh/policy: glob:build-*
+    keel.sh/trigger: poll
+    keel.sh/pollSchedule: "@every 1m"
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0     # zero-downtime: surge a new pod before removing an old one
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      imagePullSecrets:
+        - name: ghcr
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        # Block startup until Mongo is PRIMARY — the app calls connectDatabase()
+        # before listen(), so a not-ready DB would CrashLoopBackOff otherwise.
+        - name: wait-for-mongo
+          image: mongo:8
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+          command:
+            - sh
+            - -c
+            - |
+              until mongosh --host "$MONGODB_HOST:$MONGODB_PORT" --quiet \
+                    -u "$MONGODB_USERNAME" -p "$MONGODB_PASSWORD" \
+                    --authenticationDatabase "$MONGODB_AUTH_SOURCE" \
+                    --eval "quit(rs.status().myState===1?0:1)" >/dev/null 2>&1; do
+                echo "waiting for mongo PRIMARY..."; sleep 3
+              done
+      containers:
+        - name: backend
+          image: ghcr.io/konfusee/sbay-backend:latest
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              # Let endpoint removal propagate before the app stops accepting (avoids 5xx on rollout).
+              exec:
+                command: ["sh", "-c", "sleep 8"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

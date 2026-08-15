@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.*
+!.env.example
+coverage/
+dist/
+logs/
+*.log
+.DS_Store
+.vscode/
+.idea/
+# k8s real secrets — only *.example.yaml templates are committed
+infrastructure/kubernetes/*-secret.yaml
+infrastructure/kubernetes/keyfile
+infrastructure/kubernetes/*.token
+.history/

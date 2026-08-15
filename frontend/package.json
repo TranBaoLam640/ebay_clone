@@ -1,0 +1,44 @@
+{
+  "name": "sbay-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SBay Buyer storefront — modern React frontend for the eBay-clone buyer backend",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "design:lint": "npx -p @google/design.md designmd lint DESIGN.md",
+    "design:export": "npx -p @google/design.md designmd export --format css-tailwind DESIGN.md > src/theme.css"
+  },
+  "dependencies": {
+    "@gsap/react": "^2.1.2",
+    "@tanstack/react-query": "^5.62.7",
+    "axios": "^1.7.9",
+    "clsx": "^2.1.1",
+    "gsap": "^3.12.5",
+    "i18next": "^26.3.6",
+    "lenis": "^1.1.18",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-i18next": "^17.0.10",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^15.14.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2",
+    "vite": "^6.0.5"
+  }
+}

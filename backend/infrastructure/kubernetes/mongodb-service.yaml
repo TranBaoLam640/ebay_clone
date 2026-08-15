@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: sbay
+  labels:
+    app: mongodb
+spec:
+  clusterIP: None            # headless → stable DNS mongodb-0.mongodb.sbay.svc
+  # Publish DNS before the pod is Ready so the rs-init Job can reach mongod to
+  # run rs.initiate() (readiness only turns green once the node is PRIMARY).
+  publishNotReadyAddresses: true
+  selector:
+    app: mongodb
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017

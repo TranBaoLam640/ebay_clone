@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: sbay
+data:
+  NODE_ENV: "production"
+  PORT: "4000"
+  API_PREFIX: "/api/v1"
+  SWAGGER_ENABLED: "false"
+  # Cloudflare edge + ingress-nginx = 2 trusted proxy hops (client IP for logs/cookies).
+  TRUST_PROXY: "2"
+  COOKIE_SECURE: "true"
+  # "none" if the frontend is a DIFFERENT origin than the API; "lax" if same-site.
+  COOKIE_SAME_SITE: "lax"
+  # REQUIRED (no default) — exact CORS allowlist; comma-separate multiple origins (no trailing slash).
+  # e.g. prod frontend + local dev: "https://app.example.com,http://localhost:3000"
+  CLIENT_ORIGIN: "https://REPLACE-with-frontend-origin,http://localhost:3000"
+  # MongoDB StatefulSet (in-cluster). Credentials live in the Secret.
+  MONGODB_HOST: "mongodb-0.mongodb.sbay.svc.cluster.local"
+  MONGODB_PORT: "27017"
+  MONGODB_DATABASE: "sbay"
+  MONGODB_AUTH_SOURCE: "admin"
+  MONGODB_REPLICA_SET: "rs0"
+  MONGODB_TLS: "false"
+  # Email (SMTP creds are in the Secret). Production requires these to be real.
+  EMAIL_HOST: "smtp.gmail.com"
+  EMAIL_PORT: "587"
+  EMAIL_SECURE: "false"
+  EMAIL_FROM: "SDN eBay <REPLACE-with-real-sender>"
+  # MUST be https in production (env.js rejects http:// when NODE_ENV=production).
+  EMAIL_VERIFICATION_URL: "https://REPLACE-with-frontend/verify-email"
+  EMAIL_OTP_TTL_MINUTES: "5"
+  EMAIL_OTP_MAX_ATTEMPTS: "5"
+  EMAIL_OTP_RESEND_COOLDOWN_SECONDS: "60"
+  LOG_LEVEL: "info"
+  RETURN_WINDOW_DAYS: "30"
+  PAYPAL_SIMULATION_ENABLED: "true"

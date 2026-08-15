@@ -1,0 +1,26 @@
+# ingress-nginx is the SOLE rate limiter (express-rate-limit was removed for statelessness).
+# Real client IP: cloudflared runs in-cluster, so the ingress peer is the cloudflared POD IP,
+# not a Cloudflare edge IP. Configure the ingress-nginx controller (see README) to read the
+# client IP from the CF-Connecting-IP header, or the limits below bucket all users together.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend
+  namespace: sbay
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: REPLACE-with-cloudflare-hostname   # e.g. api.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 80

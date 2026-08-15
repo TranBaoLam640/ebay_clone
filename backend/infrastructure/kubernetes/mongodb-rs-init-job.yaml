@@ -1,0 +1,41 @@
+# One-shot: waits for mongod, then initiates the replica set with the STABLE FQDN
+# as the member host (never localhost, or clients outside the pod can't use rs0).
+# Idempotent — safe to re-run; skips if already initialized.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-rs-init
+  namespace: sbay
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: rs-init
+          image: mongo:8
+          envFrom:
+            - secretRef:
+                name: mongodb-secret
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              HOST="mongodb-0.mongodb.sbay.svc.cluster.local:27017"
+              echo "waiting for mongod at $HOST ..."
+              until mongosh --host "$HOST" --quiet \
+                    -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
+                    --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null 2>&1; do
+                sleep 3
+              done
+              mongosh --host "$HOST" --quiet \
+                -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" \
+                --authenticationDatabase admin --eval '
+                  try { rs.status(); print("replica set already initialized"); }
+                  catch (e) {
+                    rs.initiate({ _id: "rs0", members: [
+                      { _id: 0, host: "mongodb-0.mongodb.sbay.svc.cluster.local:27017" }
+                    ]});
+                    print("rs.initiate() done");
+                  }'

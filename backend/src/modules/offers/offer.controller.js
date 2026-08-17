@@ -34,3 +34,59 @@ export const withdrawOffer = async (req, res, next) => {
     next(error);
   }
 };
+
+export const createConversationOffer = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.createConversationOffer({
+        conversationId: req.validated.params.id,
+        userId: req.user.id,
+        price: req.validated.body.price,
+        message: req.validated.body.message,
+      }),
+      201,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const acceptOffer = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.resolveOffer(req.user.id, req.validated.params.offerId, 'ACCEPTED'),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const declineOffer = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.resolveOffer(req.user.id, req.validated.params.offerId, 'DECLINED'),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const counterOffer = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.counterOffer({
+        userId: req.user.id,
+        offerId: req.validated.params.offerId,
+        price: req.validated.body.price,
+        message: req.validated.body.message,
+      }),
+      201,
+    );
+  } catch (error) {
+    next(error);
+  }
+};

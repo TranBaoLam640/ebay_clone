@@ -22,6 +22,7 @@ import { EmptyState } from '@/components/empty-state';
 import { Button } from '@/components/button';
 import { useToast } from '@/contexts/toast-context';
 import { messageFromError } from '@/features/auth/utils/auth-errors';
+import { messagingApi } from '@/features/messages/services/messaging-api';
 import { formatDate } from '@/utils/format-date';
 import { paths } from '@/routes/paths';
 import { cn } from '@/utils/cn';
@@ -48,6 +49,11 @@ export default function OrderDetailPage() {
   const createFeedback = useMutation({
     mutationFn: (input: SellerFeedbackValue) =>
       sellerApi.createFeedback(orderId!, input),
+  });
+  const contactSeller = useMutation({
+    mutationFn: (productId: string) => messagingApi.createConversation({ productId, orderId: orderId! }),
+    onSuccess: (conversation) => window.location.assign(paths.message(conversation.id)),
+    onError: (err) => notify(messageFromError(err), 'error'),
   });
 
   if (order.isLoading) {
@@ -225,16 +231,26 @@ export default function OrderDetailPage() {
                   {/* Reviewing is per-item (one review each); returns are per-order.
                       Once reviewed, keep the button but disable it (label flips). */}
                   {canReviewOrReturn && it.productUuid && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={it.reviewed}
-                      onClick={() => setReviewItem(it)}
-                      className="mt-2"
-                    >
-                      <Icon variant={it.reviewed ? 'icon-check' : 'icon-star'} size={14} />
-                      {it.reviewed ? t('reviews.reviewed') : t('reviews.writeReview')}
-                    </Button>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={it.reviewed}
+                        onClick={() => setReviewItem(it)}
+                      >
+                        <Icon variant={it.reviewed ? 'icon-check' : 'icon-star'} size={14} />
+                        {it.reviewed ? t('reviews.reviewed') : t('reviews.writeReview')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={contactSeller.isPending}
+                        onClick={() => contactSeller.mutate(it.productUuid!)}
+                      >
+                        <Icon variant="icon-mail" size={14} />
+                        Contact Seller
+                      </Button>
+                    </div>
                   )}
                 </div>
                 {lineTotal != null && <Price cents={lineTotal} className="shrink-0 text-sm" />}

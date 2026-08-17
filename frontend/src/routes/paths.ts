@@ -10,6 +10,8 @@ export const paths = {
   forgotPassword: '/forgot-password',
   resetPassword: '/reset-password',
   checkout: '/checkout',
+  messages: '/messages',
+  message: (id: string) => `/messages?conversation=${id}`,
   orders: '/account/orders',
   order: (id: string) => `/account/orders/${id}`,
   orderCheckout: (id: string) => `/account/orders/${id}/checkout`,

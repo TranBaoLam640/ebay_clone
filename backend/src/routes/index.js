@@ -11,7 +11,9 @@ import {
   nestedAuctionRoute,
 } from '../modules/auctions/auction.route.js';
 import {
+  conversationOfferRoute,
   nestedOfferRoute,
+  offerActionRoute,
   offerMeRoute,
 } from '../modules/offers/offer.route.js';
 import {
@@ -31,6 +33,7 @@ import { orderRoute } from '../modules/orders/order.route.js';
 import { paymentRoute } from '../modules/payments/payment.route.js';
 import { returnRoute } from '../modules/returns/return-request.route.js';
 import { uploadRoute } from '../modules/uploads/upload.route.js';
+import { conversationRoute } from '../modules/conversations/conversation.route.js';
 
 export const routes = Router();
 routes.use('/auth', authRoute);
@@ -46,6 +49,7 @@ routes.use(
   nestedOfferRoute,
 );
 routes.use('/me', auctionMeRoute, offerMeRoute);
+routes.use('/offers', offerActionRoute);
 routes.use('/sellers', sellerRoute, sellerFeedbackPublicRoute);
 routes.use('/product-reviews', productReviewRoute);
 routes.use('/orders', orderSellerFeedbackRoute, orderRoute);
@@ -57,3 +61,4 @@ routes.use('/checkout-groups', checkoutGroupRoute);
 routes.use('/payments', paymentRoute);
 routes.use('/returns', returnRoute);
 routes.use('/uploads', uploadRoute);
+routes.use('/conversations', conversationRoute, conversationOfferRoute);

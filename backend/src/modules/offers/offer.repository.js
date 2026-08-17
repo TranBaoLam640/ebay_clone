@@ -1,6 +1,8 @@
 import { Offer } from './offer.model.js';
 
 export const create = (data) => Offer.create(data);
+export const createWithSession = (data, session) =>
+  Offer.create([data], { session });
 
 // The buyer's own offers, newest first (My Offers page).
 export const listByBuyer = (buyerId) =>
@@ -20,3 +22,31 @@ export const withdrawIfPending = (buyerId, offerId) =>
     { $set: { status: 'WITHDRAWN' } },
     { returnDocument: 'after' },
   ).lean();
+
+export const findById = (offerId, session) =>
+  Offer.findById(offerId)
+    .session(session || null)
+    .lean();
+
+export const updatePendingStatus = (offerId, status, session) =>
+  Offer.findOneAndUpdate(
+    { _id: offerId, status: 'PENDING', expiresAt: { $gt: new Date() } },
+    { $set: { status } },
+    { returnDocument: 'after', session },
+  ).lean();
+
+export const consumeAccepted = (offerId, buyerId, session) =>
+  Offer.findOneAndUpdate(
+    {
+      _id: offerId,
+      buyerId,
+      status: 'ACCEPTED',
+      usedAt: { $exists: false },
+      expiresAt: { $gt: new Date() },
+    },
+    { $set: { status: 'PURCHASED', usedAt: new Date() } },
+    { returnDocument: 'after', session },
+  ).lean();
+
+export const attachOrder = (offerId, orderId, session) =>
+  Offer.updateOne({ _id: offerId }, { $set: { orderId } }, { session });

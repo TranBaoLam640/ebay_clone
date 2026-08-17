@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useProduct } from '@/features/catalog/hooks/use-catalog';
 import { useAvailability } from '@/features/catalog/hooks/use-availability';
@@ -25,6 +26,8 @@ import { useCart } from '@/features/cart/cart-context';
 import { useToast } from '@/contexts/toast-context';
 import { paths } from '@/routes/paths';
 import { cn } from '@/utils/cn';
+import { messagingApi } from '@/features/messages/services/messaging-api';
+import { messageFromError } from '@/features/auth/utils/auth-errors';
 
 /** Full product detail: gallery, buy box, specs, seller, reviews. */
 export default function ProductDetailPage() {
@@ -34,7 +37,13 @@ export default function ProductDetailPage() {
   const { add } = useCart();
   const { notify } = useToast();
   const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
   const [qty, setQty] = useState(1);
+  const contactSeller = useMutation({
+    mutationFn: () => messagingApi.createConversation({ productId: product!.id }),
+    onSuccess: (conversation) => navigate(paths.message(conversation.id)),
+    onError: (err) => notify(messageFromError(err), 'error'),
+  });
 
   const isAuction = product?.listingType === 'AUCTION';
   // Live per-buyer auction state (5s poll). Null for fixed-price listings.
@@ -191,6 +200,18 @@ export default function ProductDetailPage() {
                       ? t('productDetail.outOfStock')
                       : t('productDetail.addToCart')}
                 </Button>
+                {isAuthenticated && (
+                  <Button
+                    size="lg"
+                    variant="secondary"
+                    onClick={() => contactSeller.mutate()}
+                    loading={contactSeller.isPending}
+                    disabled={removed}
+                  >
+                    <Icon variant="icon-mail" size={20} />
+                    Contact Seller
+                  </Button>
+                )}
               </div>
 
               {product.offersEnabled && (

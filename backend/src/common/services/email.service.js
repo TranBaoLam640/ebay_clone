@@ -148,4 +148,60 @@ const sendPasswordResetEmail = async ({
   }
 };
 
-export const emailService = { sendVerificationEmail, sendPasswordResetEmail };
+const sendMessageCopy = async ({
+  to,
+  listingTitle,
+  recipientName,
+  content,
+  sentAt,
+  attachments = [],
+}) => {
+  const maskedRecipient = maskEmail(to);
+  const attachmentLines = attachments
+    .map((file) => `- ${file.fileName || file.url}: ${file.url}`)
+    .join('\n');
+  const subject = `Copy of your message about "${listingTitle}"`;
+  const text = [
+    `Listing: ${listingTitle}`,
+    `Recipient: ${recipientName}`,
+    `Sent: ${new Date(sentAt).toISOString()}`,
+    '',
+    content || '(attachment message)',
+    attachmentLines ? `\nAttachments:\n${attachmentLines}` : '',
+  ].join('\n');
+  if (!transporter) {
+    logger.info(
+      {
+        messageType: 'MESSAGE_COPY',
+        recipient: maskedRecipient,
+        deliverySuppressed: true,
+      },
+      'SMTP is not configured; message copy email was not sent',
+    );
+    return false;
+  }
+  try {
+    await transporter.sendMail({ from: env.EMAIL_FROM, to, subject, text });
+    logger.info(
+      {
+        messageType: 'MESSAGE_COPY',
+        recipient: maskedRecipient,
+        deliverySuppressed: false,
+      },
+      'Message copy email delivered',
+    );
+    return true;
+  } catch (error) {
+    logger.warn(
+      { messageType: 'MESSAGE_COPY', recipient: maskedRecipient, errorCode: error.code },
+      'Message copy email delivery failed',
+    );
+    return false;
+  }
+};
+
+export const emailService = {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendMessageCopy,
+};

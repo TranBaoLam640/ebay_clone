@@ -44,6 +44,11 @@ const toItemPublic = (item) => ({
   ...(item.image !== undefined && { image: item.image }),
   ...(item.unitPrice !== undefined && { unitPrice: item.unitPrice }),
   ...(item.itemSubtotal !== undefined && { itemSubtotal: item.itemSubtotal }),
+  ...(item.offerId && { offerId: item.offerId }),
+  ...(item.originalPrice !== undefined && {
+    originalPrice: item.originalPrice,
+  }),
+  ...(item.finalPrice !== undefined && { finalPrice: item.finalPrice }),
 });
 
 export const toPublic = (order) => {
@@ -65,6 +70,7 @@ export const toPublic = (order) => {
       shippingAddress: toAddressSnapshot(source.shippingAddress),
     }),
     ...(source.deliveredAt && { deliveredAt: source.deliveredAt }),
+    ...(source.offerId && { offerId: source.offerId }),
     items: (source.items || []).map(toItemPublic),
     createdAt: source.createdAt,
     updatedAt: source.updatedAt,
@@ -164,7 +170,10 @@ export const markGroupDelivered = (
 export const detachFromGroup = (buyerId, checkoutGroupId, session) =>
   Order.updateMany(
     { buyerId, checkoutGroupId },
-    { $set: { orderStatus: 'PENDING_PAYMENT' }, $unset: { checkoutGroupId: '' } },
+    {
+      $set: { orderStatus: 'PENDING_PAYMENT' },
+      $unset: { checkoutGroupId: '' },
+    },
     { session },
   );
 

@@ -37,18 +37,47 @@ const schema = new mongoose.Schema(
       validate: Number.isInteger,
     },
     message: { type: String, trim: true, maxlength: 500 },
+    conversationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Conversation',
+      index: true,
+    },
+    sellerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SellerProfile',
+      index: true,
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    originalPrice: { type: Number, min: 0, validate: Number.isInteger },
+    parentOfferId: { type: mongoose.Schema.Types.ObjectId, ref: 'Offer' },
     status: {
       type: String,
-      enum: ['PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN'],
+      enum: [
+        'PENDING',
+        'ACCEPTED',
+        'DECLINED',
+        'COUNTERED',
+        'EXPIRED',
+        'WITHDRAWN',
+        'PURCHASED',
+      ],
       default: 'PENDING',
       required: true,
     },
     expiresAt: { type: Date, required: true },
+    usedAt: { type: Date },
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
   },
   { timestamps: true },
 );
 
 schema.index({ buyerId: 1, createdAt: -1 });
 schema.index({ productId: 1, status: 1 });
+schema.index({ conversationId: 1, createdAt: -1 });
+schema.index({ parentOfferId: 1 });
 
 export const Offer = mongoose.model('Offer', schema);

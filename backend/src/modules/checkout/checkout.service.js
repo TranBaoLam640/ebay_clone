@@ -14,9 +14,12 @@ import * as productRepository from '../products/product.repository.js';
 import * as orderRepository from '../orders/order.repository.js';
 import * as paymentRepository from '../payments/payment.repository.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
+import * as offerRepository from '../offers/offer.repository.js';
+import * as conversationRepository from '../conversations/conversation.repository.js';
 import * as notificationService from '../notifications/service.js';
 import * as idempotencyService from '../idempotency/idempotency.service.js';
 import * as checkoutGroupService from '../checkout-groups/checkout-group.service.js';
+import { emitToConversation } from '../../socket/socket.js';
 import * as repository from './checkout.repository.js';
 
 const conflict = (code, message) => new AppError(409, code, message);
@@ -32,10 +35,97 @@ const paymentDto = (payment) => ({
   updatedAt: payment.updatedAt,
 });
 
+const offerRealtimePayload = (offer) => ({
+  id: String(offer._id),
+  conversationId: offer.conversationId ? String(offer.conversationId) : null,
+  productId: offer.productId ? String(offer.productId) : null,
+  buyerId: offer.buyerId ? String(offer.buyerId) : null,
+  sellerId: offer.sellerId ? String(offer.sellerId) : null,
+  createdBy: offer.createdBy ? String(offer.createdBy) : null,
+  originalPrice: offer.originalPrice,
+  offerPrice: offer.amount,
+  amount: offer.amount,
+  quantity: offer.quantity,
+  status: offer.status,
+  parentOfferId: offer.parentOfferId ? String(offer.parentOfferId) : null,
+  orderId: offer.orderId ? String(offer.orderId) : null,
+  usedAt: offer.usedAt ?? null,
+  expiresAt: offer.expiresAt,
+  createdAt: offer.createdAt,
+});
+
+const conversationRealtimePayload = (conversation) => ({
+  id: String(conversation._id),
+  type: conversation.type,
+  orderId: conversation.orderId ? String(conversation.orderId) : null,
+  updatedAt: conversation.updatedAt,
+});
+
 const isPurchasable = (item) =>
   item.product?.status === 'ACTIVE' &&
   item.product.stock > 0 &&
   Boolean(item.product.seller);
+
+const validateAcceptedOffer = async (
+  buyerId,
+  input,
+  selectedItems,
+  session,
+) => {
+  if (!input.offerId) return null;
+  if (selectedItems.length !== 1)
+    throw conflict(
+      ERROR_CODES.CART_SELECTION_INVALID,
+      'Accepted offer checkout requires exactly one selected item',
+    );
+  const offer = await offerRepository.findById(input.offerId, session);
+  if (!offer)
+    throw new AppError(404, ERROR_CODES.OFFER_NOT_FOUND, 'Offer not found');
+  if (String(offer.buyerId) !== String(buyerId))
+    throw new AppError(
+      403,
+      ERROR_CODES.FORBIDDEN,
+      'Offer belongs to another buyer',
+    );
+  if (offer.status !== 'ACCEPTED')
+    throw conflict(ERROR_CODES.CONFLICT, 'Offer is not accepted');
+  if (offer.usedAt || offer.orderId)
+    throw conflict(ERROR_CODES.CONFLICT, 'Offer has already been used');
+  if (offer.expiresAt <= new Date())
+    throw conflict(ERROR_CODES.CONFLICT, 'Offer has expired');
+
+  const item = selectedItems[0];
+  const productId = await productRepository.resolveIdByUuid(item.productId);
+  if (!productId || String(productId) !== String(offer.productId))
+    throw conflict(ERROR_CODES.PRODUCT_UNAVAILABLE, 'Offer product mismatch');
+  if (String(item.product.seller.id) !== String(offer.sellerId))
+    throw conflict(ERROR_CODES.PRODUCT_UNAVAILABLE, 'Offer seller mismatch');
+  if (item.quantity !== offer.quantity)
+    throw conflict(
+      ERROR_CODES.CART_SELECTION_INVALID,
+      'Cart quantity must match accepted offer quantity',
+    );
+  const conversation = offer.conversationId
+    ? await conversationRepository.findById(offer.conversationId, session)
+    : null;
+  if (
+    !conversation ||
+    String(conversation.buyerId) !== String(buyerId) ||
+    String(conversation.sellerId) !== String(offer.sellerId) ||
+    String(conversation.productId) !== String(offer.productId)
+  )
+    throw conflict(ERROR_CODES.CONFLICT, 'Offer conversation mismatch');
+
+  const finalSubtotal = offer.amount * item.quantity;
+  item.offer = {
+    id: String(offer._id),
+    originalPrice: offer.originalPrice ?? item.product.price,
+    finalPrice: offer.amount,
+  };
+  item.product = { ...item.product, price: offer.amount };
+  item.itemSubtotal = finalSubtotal;
+  return { offer, conversation };
+};
 
 const selection = async (buyerId, input, session) => {
   const address = await addressRepository.owned(
@@ -71,6 +161,12 @@ const selection = async (buyerId, input, session) => {
       ERROR_CODES.INSUFFICIENT_STOCK,
       'Selected quantity exceeds stock',
     );
+  const offerContext = await validateAcceptedOffer(
+    buyerId,
+    input,
+    selectedItems,
+    session,
+  );
   const subtotal = selectedItems.reduce(
     (sum, item) => sum + item.itemSubtotal,
     0,
@@ -112,6 +208,15 @@ const selection = async (buyerId, input, session) => {
     currency: 'VND',
     shippingFee: 0,
     coupon,
+    offer: offerContext
+      ? {
+          id: String(offerContext.offer._id),
+          originalPrice:
+            offerContext.offer.originalPrice ??
+            selectedItems[0].offer.originalPrice,
+          finalPrice: offerContext.offer.amount,
+        }
+      : null,
   };
 };
 
@@ -145,8 +250,22 @@ export const execute = async (buyerId, key, input) => {
   const claim = await idempotencyService.claim('CHECKOUT', buyerId, key, hash);
   if (claim.replay) return claim.replay;
   try {
-    return await repository.transaction(async (session) => {
+    const result = await repository.transaction(async (session) => {
       const checkout = await selection(buyerId, input, session);
+      let consumedOffer = null;
+      let realtimeEvents = null;
+      if (checkout.offer) {
+        consumedOffer = await offerRepository.consumeAccepted(
+          checkout.offer.id,
+          buyerId,
+          session,
+        );
+        if (!consumedOffer)
+          throw conflict(
+            ERROR_CODES.CONFLICT,
+            'Offer is no longer available for checkout',
+          );
+      }
       // cart.service.hydrate() now exposes the public uuid as item.productId.
       // Resolve all uuids → internal ObjectIds once (batch) before any DB writes.
       const uuids = checkout.selectedItems.map((item) => item.productId);
@@ -209,10 +328,37 @@ export const execute = async (buyerId, key, input) => {
             image: item.product.primaryImage ?? null,
             unitPrice: item.product.price,
             itemSubtotal: item.itemSubtotal,
+            ...(item.offer && {
+              offerId: item.offer.id,
+              originalPrice: item.offer.originalPrice,
+              finalPrice: item.offer.finalPrice,
+            }),
           })),
+          ...(consumedOffer && { offerId: consumedOffer._id }),
         })),
         session,
       );
+      if (consumedOffer) {
+        await offerRepository.attachOrder(
+          consumedOffer._id,
+          orders[0]._id,
+          session,
+        );
+        const upgradedConversation =
+          await conversationRepository.attachOrderContext(
+            consumedOffer.conversationId,
+            orders[0]._id,
+            session,
+          );
+        realtimeEvents = {
+          conversationId: String(consumedOffer.conversationId),
+          offer: offerRealtimePayload({
+            ...consumedOffer,
+            orderId: orders[0]._id,
+          }),
+          conversation: conversationRealtimePayload(upgradedConversation),
+        };
+      }
       const payment = await paymentRepository.create(
         {
           buyerId,
@@ -267,8 +413,21 @@ export const execute = async (buyerId, key, input) => {
           ERROR_CODES.IDEMPOTENCY_PROCESSING,
           'Idempotency claim was lost',
         );
-      return { status: 201, body: response };
+      return { status: 201, body: response, realtimeEvents };
     });
+    if (result.realtimeEvents) {
+      emitToConversation(
+        result.realtimeEvents.conversationId,
+        'offer:updated',
+        result.realtimeEvents.offer,
+      );
+      emitToConversation(
+        result.realtimeEvents.conversationId,
+        'conversation:updated',
+        result.realtimeEvents.conversation,
+      );
+    }
+    return { status: result.status, body: result.body };
   } catch (error) {
     await idempotencyService.fail(
       'CHECKOUT',

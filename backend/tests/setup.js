@@ -10,6 +10,7 @@ process.env.EMAIL_OTP_HMAC_SECRET = 'd'.repeat(32);
 process.env.EMAIL_OTP_TTL_MINUTES = '10';
 process.env.EMAIL_OTP_MAX_ATTEMPTS = '5';
 process.env.EMAIL_OTP_RESEND_COOLDOWN_SECONDS = '60';
+process.env.EMAIL_FROM = 'no-reply@example.test';
 process.env.LOG_LEVEL = 'silent';
 process.env.TRUST_PROXY = '0';
 process.env.COOKIE_SECURE = 'false';

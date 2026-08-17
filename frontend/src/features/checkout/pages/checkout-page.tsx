@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAddresses } from '@/features/account/hooks/use-addresses';
 import { cartApi } from '@/features/cart/services/cart-api';
@@ -27,6 +27,8 @@ import { paths } from '@/routes/paths';
 export default function CheckoutPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const offerId = searchParams.get('offerId') ?? undefined;
   const { notify } = useToast();
   const { list: addresses } = useAddresses();
   const placeOrder = usePlaceOrder();
@@ -56,6 +58,7 @@ export default function CheckoutPage() {
           addressId: effectiveAddressId,
           paymentMethod,
           couponCode,
+          offerId,
         }
       : null;
 

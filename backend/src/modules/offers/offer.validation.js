@@ -24,3 +24,29 @@ export const offerIdSchema = z.object({
   }),
   query: z.object({}).strict(),
 });
+
+export const conversationOfferSchema = z.object({
+  body: z
+    .object({
+      price: money,
+      message: z.string().trim().max(500).optional(),
+    })
+    .strict(),
+  params: z.object({
+    id: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid identifier'),
+  }),
+  query: z.object({}).strict(),
+});
+
+export const counterOfferSchema = z.object({
+  body: z
+    .object({
+      price: money,
+      message: z.string().trim().max(500).optional(),
+    })
+    .strict(),
+  params: z.object({
+    offerId: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid identifier'),
+  }),
+  query: z.object({}).strict(),
+});

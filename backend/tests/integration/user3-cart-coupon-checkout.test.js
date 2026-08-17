@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
@@ -202,6 +203,40 @@ const add = (agent, productId, quantity = 1) =>
     quantity,
   });
 
+const executeCheckout = (agent, body, key = crypto.randomUUID()) =>
+  agent
+    .post(`${prefix}/checkout`)
+    .set('x-csrf-token', agent.csrfToken)
+    .set('Idempotency-Key', key)
+    .send(body);
+
+const acceptedOffer = async (overrides = {}) => {
+  const conversation =
+    overrides.conversationId === undefined
+      ? await models.Conversation.create({
+          buyerId: overrides.buyerId ?? ids.buyer,
+          sellerId: overrides.sellerId ?? ids.seller,
+          productId: overrides.productId ?? ids.product,
+          type: 'PRE_PURCHASE',
+          lastMessageAt: new Date(),
+        })
+      : null;
+  const offer = await models.Offer.create({
+    conversationId: overrides.conversationId ?? conversation._id,
+    productId: ids.product,
+    buyerId: ids.buyer,
+    sellerId: ids.seller,
+    createdBy: ids.sellerUser,
+    originalPrice: 101,
+    amount: 88,
+    quantity: 1,
+    status: 'ACCEPTED',
+    expiresAt: new Date(Date.now() + 60_000),
+    ...overrides,
+  });
+  return { conversation, offer };
+};
+
 const coupon = (overrides = {}) => ({
   code: 'SAVE15',
   description: 'Save',
@@ -230,6 +265,8 @@ beforeAll(async () => {
     { Coupon },
     { CouponUsage },
     { Order },
+    { Offer },
+    { Conversation },
     { Notification },
     { hashPassword },
   ] = await Promise.all([
@@ -242,6 +279,8 @@ beforeAll(async () => {
     import('../../src/modules/coupons/coupon.model.js'),
     import('../../src/modules/coupons/coupon-usage.model.js'),
     import('../../src/modules/orders/order.model.js'),
+    import('../../src/modules/offers/offer.model.js'),
+    import('../../src/modules/conversations/conversation.model.js'),
     import('../../src/modules/notifications/notification.model.js'),
     import('../../src/common/utils/hash.js'),
   ]);
@@ -255,6 +294,8 @@ beforeAll(async () => {
     Coupon,
     CouponUsage,
     Order,
+    Offer,
+    Conversation,
     Notification,
   };
   passwordHash = await hashPassword(password);
@@ -763,5 +804,150 @@ describe('User 3 cart, coupon, and checkout preview', () => {
   it('exposes checkout execution with strict request validation', async () => {
     const agent = await login();
     await mutate(agent, 'post', '/checkout', {}).expect(400);
+  });
+
+  it('accepted offer checkout uses offer price, snapshots it on order, and upgrades conversation', async () => {
+    const agent = await login();
+    const item = (await add(agent, ids.productUuid, 1).expect(200)).body.data
+      .items[0];
+    const { conversation, offer } = await acceptedOffer();
+
+    const response = await executeCheckout(agent, {
+      selectedCartItemIds: [item.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: String(offer._id),
+    }).expect(201);
+
+    expect(response.body.data).toEqual(
+      expect.objectContaining({ subtotal: 88, total: 88 }),
+    );
+    const order = await models.Order.findById(
+      response.body.data.orders[0]._id,
+    ).lean();
+    expect(order).toEqual(
+      expect.objectContaining({
+        subtotal: 88,
+        total: 88,
+        offerId: offer._id,
+      }),
+    );
+    expect(order.items[0]).toEqual(
+      expect.objectContaining({
+        unitPrice: 88,
+        itemSubtotal: 88,
+        offerId: offer._id,
+        originalPrice: 101,
+        finalPrice: 88,
+      }),
+    );
+    expect(await models.Offer.findById(offer._id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'PURCHASED',
+        orderId: order._id,
+      }),
+    );
+    expect(await models.Conversation.findById(conversation._id).lean()).toEqual(
+      expect.objectContaining({
+        type: 'POST_PURCHASE',
+        orderId: order._id,
+      }),
+    );
+  });
+
+  it('rejects tampered price and invalid offer checkout states', async () => {
+    const agent = await login();
+    const item = (await add(agent, ids.productUuid, 1).expect(200)).body.data
+      .items[0];
+    const { offer } = await acceptedOffer();
+
+    await executeCheckout(agent, {
+      selectedCartItemIds: [item.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: String(offer._id),
+      finalPrice: 1,
+    }).expect(400);
+
+    for (const status of ['PENDING', 'DECLINED', 'COUNTERED', 'EXPIRED']) {
+      const { offer: invalid } = await acceptedOffer({
+        _id: new mongoose.Types.ObjectId(),
+        conversationId: new mongoose.Types.ObjectId(),
+        status,
+      });
+      await executeCheckout(agent, {
+        selectedCartItemIds: [item.id],
+        addressId: String(ids.address),
+        paymentMethod: 'COD',
+        offerId: String(invalid._id),
+      }).expect(409);
+    }
+  });
+
+  it('rejects wrong buyer, wrong product, and reused accepted offers', async () => {
+    const agent = await login();
+    const item = (await add(agent, ids.productUuid, 1).expect(200)).body.data
+      .items[0];
+    const wrongBuyer = await acceptedOffer({
+      buyerId: ids.otherBuyer,
+      _id: new mongoose.Types.ObjectId(),
+      conversationId: new mongoose.Types.ObjectId(),
+    });
+    await executeCheckout(agent, {
+      selectedCartItemIds: [item.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: String(wrongBuyer.offer._id),
+    }).expect(403);
+
+    const wrongProduct = await acceptedOffer({
+      productId: ids.product2,
+      sellerId: ids.seller2,
+      _id: new mongoose.Types.ObjectId(),
+      conversationId: new mongoose.Types.ObjectId(),
+    });
+    await executeCheckout(agent, {
+      selectedCartItemIds: [item.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: String(wrongProduct.offer._id),
+    }).expect(409);
+
+    const { offer } = await acceptedOffer();
+    await executeCheckout(agent, {
+      selectedCartItemIds: [item.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: String(offer._id),
+    }).expect(201);
+    await add(agent, ids.productUuid, 1).expect(200);
+    const freshCart = await agent.get(`${prefix}/cart`).expect(200);
+    await executeCheckout(agent, {
+      selectedCartItemIds: [freshCart.body.data.items[0].id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: String(offer._id),
+    }).expect(409);
+  });
+
+  it('normal checkout execution still uses current product price', async () => {
+    const agent = await login();
+    const item = (await add(agent, ids.productUuid, 2).expect(200)).body.data
+      .items[0];
+    const response = await executeCheckout(agent, {
+      selectedCartItemIds: [item.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+    }).expect(201);
+    expect(response.body.data).toEqual(
+      expect.objectContaining({ subtotal: 202, total: 202 }),
+    );
+    const order = await models.Order.findById(
+      response.body.data.orders[0]._id,
+    ).lean();
+    expect(order.items[0]).toEqual(
+      expect.objectContaining({ unitPrice: 101, itemSubtotal: 202 }),
+    );
+    expect(order.offerId).toBeUndefined();
   });
 });

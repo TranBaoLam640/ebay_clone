@@ -33,6 +33,7 @@ export interface CheckoutPreview {
   stockWarnings: { productId: string; message: string }[];
   paymentMethods: PaymentMethod[];
   selectedPaymentMethod: PaymentMethod;
+  offer?: { id: string; originalPrice: number; finalPrice: number } | null;
 }
 
 export interface CheckoutInput {
@@ -40,6 +41,7 @@ export interface CheckoutInput {
   addressId: string;
   paymentMethod: PaymentMethod;
   couponCode?: string;
+  offerId?: string;
 }
 
 export interface CheckoutGroupResult {
@@ -119,6 +121,9 @@ export interface OrderItem {
   image: string | null;
   unitPrice: number | null;
   itemSubtotal: number | null;
+  offerId?: string;
+  originalPrice?: number;
+  finalPrice?: number;
 }
 
 export interface OrderSummary {
@@ -159,6 +164,9 @@ function normalizeOrder<T extends OrderSummary>(raw: Record<string, unknown>): T
       image: (it.image ?? null) as string | null,
       unitPrice: (it.unitPrice ?? null) as number | null,
       itemSubtotal: (it.itemSubtotal ?? null) as number | null,
+      offerId: it.offerId as string | undefined,
+      originalPrice: it.originalPrice as number | undefined,
+      finalPrice: it.finalPrice as number | undefined,
     })),
   } as unknown as T;
 }

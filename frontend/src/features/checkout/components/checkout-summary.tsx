@@ -54,6 +54,12 @@ export function CheckoutSummary({
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 text-sm font-medium text-text">{item.product.title}</p>
                   <p className="text-xs text-muted">x{item.quantity}</p>
+                  {preview.offer && (
+                    <p className="mt-1 text-xs text-muted">
+                      Original: <Price cents={preview.offer.originalPrice} /> · Accepted offer:{' '}
+                      <Price cents={preview.offer.finalPrice} />
+                    </p>
+                  )}
                 </div>
                 <Price cents={item.itemSubtotal} className="shrink-0 text-sm" />
               </li>

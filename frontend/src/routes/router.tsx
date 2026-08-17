@@ -21,6 +21,7 @@ const ProfilePage = lazy(() => import('@/features/account/pages/profile-page'));
 const PasswordPage = lazy(() => import('@/features/account/pages/password-page'));
 const AddressesPage = lazy(() => import('@/features/account/pages/addresses-page'));
 const NotificationsPage = lazy(() => import('@/features/notifications/pages/notifications-page'));
+const MessagesPage = lazy(() => import('@/features/messages/pages/messages-page'));
 const MyBidsPage = lazy(() => import('@/features/account/pages/my-bids-page'));
 const MyOffersPage = lazy(() => import('@/features/account/pages/my-offers-page'));
 const CheckoutPage = lazy(() => import('@/features/checkout/pages/checkout-page'));
@@ -56,6 +57,7 @@ export const router = createBrowserRouter([
         element: <ProtectedRoute />,
         children: [
           { path: '/checkout', element: <Lazy><CheckoutPage /></Lazy> },
+          { path: '/messages', element: <Lazy><MessagesPage /></Lazy> },
           {
             path: '/account',
             element: <AccountLayout />,

@@ -7,6 +7,7 @@ export const checkoutBody = z
     addressId: objectId,
     couponCode: z.string().trim().min(1).optional(),
     paymentMethod: z.enum(['COD', 'PAYPAL']),
+    offerId: objectId.optional(),
   })
   .strict();
 export const previewSchema = z.object({

@@ -22,6 +22,9 @@ const itemSchema = new mongoose.Schema(
     image: String,
     unitPrice: { type: Number, min: 0 },
     itemSubtotal: { type: Number, min: 0 },
+    offerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Offer' },
+    originalPrice: { type: Number, min: 0 },
+    finalPrice: { type: Number, min: 0 },
   },
   { timestamps: false },
 );
@@ -55,6 +58,7 @@ const schema = new mongoose.Schema(
     currency: { type: String, enum: ['VND'], default: 'VND' },
     shippingAddress: { type: mongoose.Schema.Types.Mixed },
     deliveredAt: Date,
+    offerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Offer' },
     items: {
       type: [itemSchema],
       required: true,

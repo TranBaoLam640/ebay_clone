@@ -168,6 +168,26 @@ describe('Swagger documentation', () => {
       document.components.schemas.ProductReviewSummary.properties.available,
     ).toEqual(expect.objectContaining({ type: 'boolean' }));
     expect(
+      document.components.schemas.CreateOrderItemProductReviewRequest.required,
+    ).toEqual(['rating', 'title', 'description']);
+    expect(
+      document.components.schemas.CreateOrderItemProductReviewRequest.properties
+        .title,
+    ).toEqual(expect.objectContaining({ minLength: 1, maxLength: 120 }));
+    expect(
+      document.components.schemas.CreateOrderItemProductReviewRequest.properties
+        .description,
+    ).toEqual(expect.objectContaining({ minLength: 1, maxLength: 2000 }));
+    expect(document.components.schemas.ProductReview.properties).toEqual(
+      expect.objectContaining({
+        title: expect.objectContaining({ maxLength: 120 }),
+        description: expect.objectContaining({ maxLength: 2000 }),
+        verifiedPurchase: expect.objectContaining({ readOnly: true }),
+        purchasedProduct: expect.objectContaining({ nullable: true }),
+        soldBy: expect.objectContaining({ nullable: true }),
+      }),
+    );
+    expect(
       document.components.schemas.ProductListItem.properties
         .productReviewAvailable,
     ).toEqual(expect.objectContaining({ type: 'boolean' }));

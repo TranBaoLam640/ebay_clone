@@ -1778,7 +1778,8 @@ describe('User 4 checkout, payment, orders, and returns', () => {
       orderId: String(ids.deliveredOrder),
       orderItemId: String(ids.deliveredItem),
       rating: 5,
-      comment: 'Great',
+      title: 'Great product',
+      description: 'The product was great.',
     }).expect(201);
     await mutate(
       agent,

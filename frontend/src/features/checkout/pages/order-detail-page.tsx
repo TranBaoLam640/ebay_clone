@@ -74,7 +74,11 @@ export default function OrderDetailPage() {
   // The backend allows one return request per order — find this order's, if any.
   const existingReturn = returns.data?.find((r) => r.orderId === o.id) ?? null;
 
-  const submitReview = async (value: { rating: number; comment?: string }) => {
+  const submitReview = async (value: {
+    rating: number;
+    title: string;
+    description: string;
+  }) => {
     if (!reviewItem) return;
     try {
       await createReview.mutateAsync({
@@ -84,7 +88,8 @@ export default function OrderDetailPage() {
         orderId: o.id,
         orderItemId: reviewItem.id,
         rating: value.rating,
-        comment: value.comment,
+        title: value.title,
+        description: value.description,
       });
       notify(t('reviews.submittedToast'), 'success');
       setReviewItem(null);

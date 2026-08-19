@@ -13,7 +13,8 @@ import {
 
 const reviewBody = {
   rating: { type: 'integer', minimum: 1, maximum: 5 },
-  comment: { type: 'string', maxLength: 2000 },
+  title: { type: 'string', minLength: 1, maxLength: 120 },
+  description: { type: 'string', minLength: 1, maxLength: 2000 },
 };
 export const productReviewPaths = {
   '/products/{productId}/review-summary': {
@@ -39,7 +40,8 @@ export const productReviewPaths = {
           type: 'string',
           minLength: 1,
           maxLength: 200,
-          description: 'Search review comments only.',
+          description:
+            'Searches product review title and description; legacy comments are included for compatibility.',
         }),
         query('rating', { type: 'integer', minimum: 1, maximum: 5 }),
         query('sort', {
@@ -70,7 +72,7 @@ export const productReviewPaths = {
             orderItemId: { type: 'string', pattern: '^[a-fA-F0-9]{24}$' },
             ...reviewBody,
           },
-          ['orderId', 'orderItemId', 'rating'],
+          ['orderId', 'orderItemId', 'rating', 'title', 'description'],
         ),
       ),
       success: response('Review created', ref('ProductReview')),

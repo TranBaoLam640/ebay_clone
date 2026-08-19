@@ -122,6 +122,8 @@ export interface OrderItem {
   productReview: {
     id: string;
     rating: number;
+    title: string;
+    description: string | null;
     comment: string | null;
     createdAt: string;
   } | null;

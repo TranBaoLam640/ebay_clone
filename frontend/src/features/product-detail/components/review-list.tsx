@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import { useProductReviews } from '@/features/catalog/hooks/use-catalog';
 import type {
   ProductDetail,
@@ -16,6 +17,7 @@ import { Select } from '@/components/select';
 import { Skeleton } from '@/components/skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { formatDate } from '@/utils/format-date';
+import { paths } from '@/routes/paths';
 
 const ratingKeys = ['5', '4', '3', '2', '1'] as const;
 
@@ -134,33 +136,60 @@ export function ReviewList({ product }: ReviewListProps) {
             {reviews.data!.items.map((review) => {
               const buyerName =
                 review.buyer?.displayName ?? review.reviewer.fullName;
+              const description = review.description || review.comment;
               return (
                 <li key={review.id} className="py-5">
-                  <div className="flex gap-3">
-                    <Avatar
-                      src={review.buyer?.avatarUrl ?? review.reviewer.avatarUrl}
-                      name={buyerName}
-                      size={40}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <Rating value={review.rating} size={15} />
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                        <span className="font-semibold text-text">
+                  <div className="grid gap-4 md:grid-cols-[13rem_minmax(0,1fr)]">
+                    <div className="flex gap-3 md:block">
+                      <Avatar
+                        src={
+                          review.buyer?.avatarUrl ?? review.reviewer.avatarUrl
+                        }
+                        name={buyerName}
+                        size={40}
+                        className="md:mb-3"
+                      />
+                      <div className="min-w-0">
+                        <Rating value={review.rating} size={15} />
+                        <p className="mt-1 text-sm font-semibold text-text">
                           {t('productDetail.byBuyer', { name: buyerName })}
-                        </span>
-                        <span className="text-muted">
+                        </p>
+                        <p className="text-sm text-muted">
                           {formatDate(review.createdAt)}
-                        </span>
+                        </p>
                       </div>
-                      {review.comment && (
-                        <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-text">
-                          {review.comment}
+                    </div>
+
+                    <div className="min-w-0">
+                      <h4 className="text-base font-bold text-text">
+                        {review.title}
+                      </h4>
+                      {description && (
+                        <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-text">
+                          {description}
                         </p>
                       )}
                       {review.verifiedPurchase && (
-                        <Badge tone="success" className="mt-3 w-fit">
+                        <Badge tone="success" className="mt-4 w-fit">
                           {t('productDetail.verifiedPurchase')}
                         </Badge>
+                      )}
+                      {review.purchasedProduct && (
+                        <div className="mt-3 text-sm">
+                          <Link
+                            to={paths.product(review.purchasedProduct.id)}
+                            className="font-medium text-text underline decoration-border underline-offset-2 hover:text-primary"
+                          >
+                            {review.purchasedProduct.name}
+                          </Link>
+                          {review.soldBy && (
+                            <p className="mt-1 text-muted">
+                              {t('productDetail.soldBy', {
+                                name: review.soldBy.displayName,
+                              })}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>

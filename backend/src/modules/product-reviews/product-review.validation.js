@@ -5,6 +5,8 @@ const objectId = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid identifier');
 const productUuid = z.string().uuid('Invalid product id');
 const empty = z.object({}).strict();
 const comment = z.string().trim().max(2000).optional();
+const title = z.string().trim().min(1).max(120);
+const description = z.string().trim().min(1).max(2000);
 
 export const listProductReviewsSchema = z
   .object({
@@ -46,7 +48,8 @@ export const createProductReviewSchema = z
         orderId: objectId,
         orderItemId: objectId,
         rating: z.number().int().min(1).max(5),
-        comment,
+        title,
+        description,
       })
       .strict(),
     params: z.object({ productId: productUuid }).strict(),
@@ -59,7 +62,8 @@ export const createOrderItemProductReviewSchema = z
     body: z
       .object({
         rating: z.number().int().min(1).max(5),
-        comment,
+        title,
+        description,
       })
       .strict(),
     params: z.object({ orderId: objectId, orderItemId: objectId }).strict(),
@@ -70,7 +74,12 @@ export const createOrderItemProductReviewSchema = z
 export const updateProductReviewSchema = z
   .object({
     body: z
-      .object({ rating: z.number().int().min(1).max(5).optional(), comment })
+      .object({
+        rating: z.number().int().min(1).max(5).optional(),
+        title: title.optional(),
+        description: description.optional(),
+        comment,
+      })
       .strict()
       .refine((value) => Object.keys(value).length > 0, {
         message: 'At least one field is required',

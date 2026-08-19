@@ -70,7 +70,15 @@ const reviewInput = (orderId = ids.order, orderItemId = ids.orderItem) => ({
   orderId: String(orderId),
   orderItemId: String(orderItemId),
   rating: 5,
-  comment: 'Excellent product',
+  title: 'Excellent product',
+  description: 'The product quality is excellent.',
+});
+
+const reviewBody = (overrides = {}) => ({
+  rating: 5,
+  title: 'Excellent product',
+  description: 'The product quality is excellent.',
+  ...overrides,
 });
 
 const feedbackInput = (overrides = {}) => ({
@@ -860,7 +868,8 @@ describe('User 2 catalog and reputation', () => {
         orderId: ids.order,
         orderItemId: new mongoose.Types.ObjectId(),
         rating: index + 1 > 5 ? 5 : index + 1,
-        comment: `Review ${index}`,
+        title: `Review ${index}`,
+        description: `Review ${index}`,
         createdAt: new Date(2026, 0, index + 1),
       })),
     );
@@ -868,7 +877,7 @@ describe('User 2 catalog and reputation', () => {
       .get(`${prefix}/products/${ids.productUuid}`)
       .expect(200);
     expect(detail.body.data.recentReviews).toHaveLength(5);
-    expect(detail.body.data.recentReviews[0].comment).toBe('Review 5');
+    expect(detail.body.data.recentReviews[0].title).toBe('Review 5');
   });
 
   it('paginates and filters public reviews and rejects wrong product or item', async () => {
@@ -917,7 +926,7 @@ describe('User 2 catalog and reputation', () => {
     ).toBe(403);
   });
 
-  it('searches review comments and sorts product reviews by newest, highest, and lowest', async () => {
+  it('searches review title and description and sorts product reviews by newest, highest, and lowest', async () => {
     await models.ProductReview.create([
       {
         productId: ids.product,
@@ -927,7 +936,8 @@ describe('User 2 catalog and reputation', () => {
         orderId: ids.order,
         orderItemId: new mongoose.Types.ObjectId(),
         rating: 2,
-        comment: 'Battery was acceptable',
+        title: 'Acceptable battery',
+        description: 'Battery was acceptable',
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       },
       {
@@ -938,7 +948,8 @@ describe('User 2 catalog and reputation', () => {
         orderId: ids.order,
         orderItemId: new mongoose.Types.ObjectId(),
         rating: 5,
-        comment: 'Excellent screen quality',
+        title: 'Excellent screen quality',
+        description: 'Display is bright',
         createdAt: new Date('2026-01-03T00:00:00.000Z'),
       },
       {
@@ -949,7 +960,8 @@ describe('User 2 catalog and reputation', () => {
         orderId: ids.order,
         orderItemId: new mongoose.Types.ObjectId(),
         rating: 3,
-        comment: 'Keyboard feels fine',
+        title: 'Keyboard feels fine',
+        description: 'Typing is comfortable',
         createdAt: new Date('2026-01-02T00:00:00.000Z'),
       },
     ]);
@@ -959,8 +971,16 @@ describe('User 2 catalog and reputation', () => {
       .expect(200)
       .then(({ body }) => {
         expect(body.meta.available).toBe(true);
-        expect(body.data.map((review) => review.comment)).toEqual([
+        expect(body.data.map((review) => review.title)).toEqual([
           'Excellent screen quality',
+        ]);
+      });
+    await request(app)
+      .get(`${prefix}/products/${ids.productUuid}/reviews?q=battery`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data.map((review) => review.description)).toEqual([
+          'Battery was acceptable',
         ]);
       });
     await request(app)
@@ -997,8 +1017,7 @@ describe('User 2 catalog and reputation', () => {
       'post',
       `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
       {
-        rating: 5,
-        comment: 'Excellent product',
+        ...reviewBody(),
         buyerId: String(ids.otherBuyer),
         productId: String(ids.outOfStockProduct),
         catalogProductId: String(ids.outOfStockCatalogProduct),
@@ -1030,13 +1049,15 @@ describe('User 2 catalog and reputation', () => {
       buyer,
       'post',
       `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
-      { rating: 5, comment: 'Excellent product' },
+      reviewBody(),
     );
     expect(created.status).toBe(201);
     expect(created.body.data).toEqual(
       expect.objectContaining({
         rating: 5,
-        comment: 'Excellent product',
+        title: 'Excellent product',
+        description: 'The product quality is excellent.',
+        comment: 'The product quality is excellent.',
         productId: String(ids.product),
         catalogProductId: String(ids.catalogProduct),
         ePID: 'SBAY-EPID-TEST-0001',
@@ -1054,6 +1075,8 @@ describe('User 2 catalog and reputation', () => {
         productId: ids.product,
         catalogProductId: ids.catalogProduct,
         ePID: 'SBAY-EPID-TEST-0001',
+        title: 'Excellent product',
+        description: 'The product quality is excellent.',
       }),
     );
     await buyer
@@ -1069,7 +1092,8 @@ describe('User 2 catalog and reputation', () => {
             productReview: expect.objectContaining({
               id: created.body.data.id,
               rating: 5,
-              comment: 'Excellent product',
+              title: 'Excellent product',
+              description: 'The product quality is excellent.',
             }),
           }),
         );
@@ -1090,7 +1114,7 @@ describe('User 2 catalog and reputation', () => {
         buyer,
         'post',
         `/orders/${orderId}/items/${orderItemId}/product-review`,
-        { rating: 5 },
+        reviewBody(),
       ).then(({ status, body }) => {
         expect(status).toBe(409);
         expect(body.error.code).toBe('CONFLICT');
@@ -1131,28 +1155,28 @@ describe('User 2 catalog and reputation', () => {
       buyer,
       'post',
       `/orders/${pendingOrder}/items/${pendingItem}/product-review`,
-      { rating: 5 },
+      reviewBody(),
     ).then(({ status }) => expect(status).toBe(403));
     for (const rating of [0, 6, 4.5]) {
       await mutate(
         buyer,
         'post',
         `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
-        { rating },
+        reviewBody({ rating }),
       ).then(({ status }) => expect(status).toBe(400));
     }
     await mutate(
       sellerOwner,
       'post',
       `/orders/${ids.selfOrder}/items/${ids.selfOrderItem}/product-review`,
-      { rating: 5 },
+      reviewBody(),
     ).then(({ status }) => expect(status).toBe(403));
 
     const first = await mutate(
       buyer,
       'post',
       `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
-      { rating: 4 },
+      reviewBody({ rating: 4 }),
     );
     expect(first.status).toBe(201);
     expect(first.body.data.id).toEqual(expect.any(String));
@@ -1160,8 +1184,27 @@ describe('User 2 catalog and reputation', () => {
       buyer,
       'post',
       `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
-      { rating: 5 },
+      reviewBody(),
     ).then(({ status }) => expect(status).toBe(409));
+  });
+
+  it('validates product review title and description content', async () => {
+    const buyer = await login('buyer@example.test');
+    for (const body of [
+      { rating: 5, description: 'Useful details' },
+      reviewBody({ title: '   ' }),
+      reviewBody({ title: 'x'.repeat(121) }),
+      { rating: 5, title: 'Useful title' },
+      reviewBody({ description: '   ' }),
+      reviewBody({ description: 'x'.repeat(2001) }),
+    ]) {
+      await mutate(
+        buyer,
+        'post',
+        `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+        body,
+      ).then(({ status }) => expect(status).toBe(400));
+    }
   });
 
   it('serializes concurrent duplicate product reviews for one purchased item', async () => {
@@ -1171,13 +1214,13 @@ describe('User 2 catalog and reputation', () => {
         buyer,
         'post',
         `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
-        { rating: 5 },
+        reviewBody(),
       ),
       mutate(
         buyer,
         'post',
         `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
-        { rating: 4 },
+        reviewBody({ rating: 4 }),
       ),
     ]);
     expect([a.status, b.status].sort()).toEqual([201, 409]);
@@ -1280,19 +1323,31 @@ describe('User 2 catalog and reputation', () => {
       buyer,
       'post',
       `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
-      { rating: 5, comment: 'Shared review A' },
+      reviewBody({
+        rating: 5,
+        title: 'Shared review A',
+        description: 'Shared catalog review from Tech Haven purchase.',
+      }),
     ).then(({ status }) => expect(status).toBe(201));
     await mutate(
       other,
       'post',
       `/orders/${orderB}/items/${itemB}/product-review`,
-      { rating: 3, comment: 'Shared review B' },
+      reviewBody({
+        rating: 3,
+        title: 'Shared review B',
+        description: 'Shared catalog review from Urban Style purchase.',
+      }),
     ).then(({ status }) => expect(status).toBe(201));
     await mutate(
       other,
       'post',
       `/orders/${orderC}/items/${itemC}/product-review`,
-      { rating: 2, comment: 'Different catalog review' },
+      reviewBody({
+        rating: 2,
+        title: 'Different catalog review',
+        description: 'Different catalog review.',
+      }),
     ).then(({ status }) => expect(status).toBe(201));
 
     for (const productUuid of [ids.productUuid, listingBUuid]) {
@@ -1311,10 +1366,25 @@ describe('User 2 catalog and reputation', () => {
         .get(`${prefix}/products/${productUuid}/reviews`)
         .expect(200)
         .then(({ body }) => {
-          expect(body.data.map((review) => review.comment).sort()).toEqual([
+          expect(body.data.map((review) => review.title).sort()).toEqual([
             'Shared review A',
             'Shared review B',
           ]);
+          const techHavenReview = body.data.find(
+            (review) => review.title === 'Shared review A',
+          );
+          expect(techHavenReview).toEqual(
+            expect.objectContaining({
+              purchasedProduct: expect.objectContaining({
+                id: ids.productUuid,
+                name: 'Precision Laptop',
+              }),
+              soldBy: expect.objectContaining({
+                id: String(ids.seller),
+                displayName: 'Trusted Tech',
+              }),
+            }),
+          );
         });
       await request(app)
         .get(`${prefix}/products/${productUuid}`)
@@ -1446,8 +1516,18 @@ describe('User 2 catalog and reputation', () => {
     expect(created.body.data).toEqual(
       expect.objectContaining({
         rating: 5,
-        comment: 'Excellent product',
+        title: 'Excellent product',
+        description: 'The product quality is excellent.',
+        comment: 'The product quality is excellent.',
         reviewer: { fullName: 'Buyer One' },
+        purchasedProduct: expect.objectContaining({
+          id: ids.productUuid,
+          name: 'Precision Laptop',
+        }),
+        soldBy: expect.objectContaining({
+          id: String(ids.seller),
+          displayName: 'Trusted Tech',
+        }),
       }),
     );
     expect(await models.Product.findById(ids.product).lean()).toEqual(
@@ -1466,10 +1546,18 @@ describe('User 2 catalog and reputation', () => {
       buyer,
       'patch',
       `/product-reviews/${reviewId}`,
-      { rating: 2, comment: 'Reconsidered' },
+      {
+        rating: 2,
+        title: 'Reconsidered',
+        description: 'The product was not as strong after more use.',
+      },
     );
     expect(updated.status).toBe(200);
     expect(updated.body.data.rating).toBe(2);
+    expect(updated.body.data.title).toBe('Reconsidered');
+    expect(updated.body.data.description).toBe(
+      'The product was not as strong after more use.',
+    );
     expect(await models.Product.findById(ids.product).lean()).toEqual(
       expect.objectContaining({ averageRating: 2, reviewCount: 1 }),
     );

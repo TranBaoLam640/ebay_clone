@@ -224,21 +224,23 @@ export const schemas = {
   CreateProductReviewRequest: {
     type: 'object',
     additionalProperties: false,
-    required: ['orderId', 'orderItemId', 'rating'],
+    required: ['orderId', 'orderItemId', 'rating', 'title', 'description'],
     properties: {
       orderId: objectId,
       orderItemId: objectId,
       rating,
-      comment: { type: 'string', maxLength: 2000 },
+      title: { type: 'string', minLength: 1, maxLength: 120 },
+      description: { type: 'string', minLength: 1, maxLength: 2000 },
     },
   },
   CreateOrderItemProductReviewRequest: {
     type: 'object',
     additionalProperties: false,
-    required: ['rating'],
+    required: ['rating', 'title', 'description'],
     properties: {
       rating,
-      comment: { type: 'string', maxLength: 2000 },
+      title: { type: 'string', minLength: 1, maxLength: 120 },
+      description: { type: 'string', minLength: 1, maxLength: 2000 },
     },
   },
   UpdateProductReviewRequest: {
@@ -453,7 +455,14 @@ export const schemas = {
         description: 'Project-local eBay-style catalog product identifier.',
       },
       rating,
-      comment: { type: 'string' },
+      title: { type: 'string', maxLength: 120 },
+      description: { type: 'string', maxLength: 2000 },
+      comment: {
+        type: 'string',
+        deprecated: true,
+        description:
+          'Legacy alias retained for old clients. New clients should read description.',
+      },
       verifiedPurchase: {
         type: 'boolean',
         readOnly: true,
@@ -482,6 +491,14 @@ export const schemas = {
         properties: {
           id: productUuid,
           name: { type: 'string' },
+        },
+      },
+      soldBy: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: objectId,
+          displayName: { type: 'string' },
         },
       },
       createdAt: timestamp,
@@ -1103,6 +1120,8 @@ export const schemas = {
         properties: {
           id: objectId,
           rating,
+          title: { type: 'string', maxLength: 120 },
+          description: { type: 'string', maxLength: 2000 },
           comment: { type: 'string', nullable: true },
           createdAt: timestamp,
         },

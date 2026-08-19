@@ -7,23 +7,28 @@ export interface CreateReviewInput {
   orderId: string;
   orderItemId: string;
   rating: number;
-  comment?: string;
+  title: string;
+  description: string;
 }
 
 export const reviewApi = {
   /** Create a review for an exact delivered order item. */
-  create: ({ orderId, orderItemId, rating, comment }: CreateReviewInput) =>
+  create: ({ orderId, orderItemId, rating, title, description }: CreateReviewInput) =>
     apiMutate<ProductReview>(
       'post',
       `/orders/${orderId}/items/${orderItemId}/product-review`,
       {
-      rating,
-      ...(comment ? { comment } : {}),
+        rating,
+        title,
+        description,
       },
     ),
 
   /** Update an existing review the user owns. */
-  update: (reviewId: string, data: { rating?: number; comment?: string }) =>
+  update: (
+    reviewId: string,
+    data: { rating?: number; title?: string; description?: string },
+  ) =>
     apiMutate<ProductReview>('patch', `/product-reviews/${reviewId}`, data),
 
   /** Delete a review the user owns. */

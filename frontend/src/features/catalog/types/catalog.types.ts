@@ -91,11 +91,14 @@ export interface ProductAttribute {
 export interface ProductReview {
   id: string;
   rating: number;
+  title: string;
+  description: string;
   comment: string | null;
   verifiedPurchase: boolean;
   buyer?: { id: string; displayName: string; avatarUrl: string | null } | null;
   reviewer: { fullName: string; avatarUrl: string | null };
   purchasedProduct?: { id: string; name: string } | null;
+  soldBy?: { id: string; displayName: string } | null;
   createdAt: string;
   updatedAt: string;
 }

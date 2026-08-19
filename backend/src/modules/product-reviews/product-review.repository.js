@@ -5,7 +5,9 @@ const publicProjection = {
   _id: 0,
   id: '$_id',
   rating: 1,
-  comment: 1,
+  title: { $ifNull: ['$title', 'Product review'] },
+  description: { $ifNull: ['$description', '$comment'] },
+  comment: { $ifNull: ['$comment', '$description'] },
   productId: 1,
   catalogProductId: 1,
   ePID: 1,
@@ -22,6 +24,10 @@ const publicProjection = {
   purchasedProduct: {
     id: '$purchasedProduct.uuid',
     name: '$purchasedProduct.title',
+  },
+  soldBy: {
+    id: '$soldBy._id',
+    displayName: '$soldBy.displayName',
   },
   createdAt: 1,
   updatedAt: 1,
@@ -43,7 +49,7 @@ const publicPipeline = () => [
       from: 'products',
       localField: 'productId',
       foreignField: '_id',
-      pipeline: [{ $project: { _id: 0, uuid: 1, title: 1 } }],
+      pipeline: [{ $project: { _id: 0, uuid: 1, title: 1, sellerId: 1 } }],
       as: 'purchasedProduct',
     },
   },
@@ -53,6 +59,16 @@ const publicPipeline = () => [
       preserveNullAndEmptyArrays: true,
     },
   },
+  {
+    $lookup: {
+      from: 'sellerprofiles',
+      localField: 'purchasedProduct.sellerId',
+      foreignField: '_id',
+      pipeline: [{ $project: { _id: 1, displayName: 1 } }],
+      as: 'soldBy',
+    },
+  },
+  { $unwind: { path: '$soldBy', preserveNullAndEmptyArrays: true } },
   { $project: publicProjection },
 ];
 
@@ -154,11 +170,13 @@ export const list = async (
     catalogProductId: new mongoose.Types.ObjectId(catalogProductId),
   };
   if (rating !== undefined) match.rating = rating;
-  if (q)
-    match.comment = {
+  if (q) {
+    const regex = {
       $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
       $options: 'i',
     };
+    match.$or = [{ title: regex }, { description: regex }, { comment: regex }];
+  }
   const sortMap = {
     newest: { createdAt: -1 },
     oldest: { createdAt: 1 },
@@ -222,7 +240,7 @@ export const reviewedOrderItemIds = async (orderItemIds) => {
 
 export const reviewsByOrderItemIds = async (orderItemIds) => {
   const docs = await ProductReview.find({ orderItemId: { $in: orderItemIds } })
-    .select('_id orderItemId rating comment createdAt')
+    .select('_id orderItemId rating title description comment createdAt')
     .lean();
   return new Map(
     docs.map((doc) => [
@@ -230,6 +248,8 @@ export const reviewsByOrderItemIds = async (orderItemIds) => {
       {
         id: String(doc._id),
         rating: doc.rating,
+        title: doc.title ?? 'Product review',
+        description: doc.description ?? doc.comment ?? null,
         comment: doc.comment ?? null,
         createdAt: doc.createdAt,
       },

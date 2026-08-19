@@ -166,7 +166,8 @@ export const createForOrderItem = async (
       repository.create(
         {
           rating: input.rating,
-          comment: input.comment,
+          title: input.title,
+          description: input.description,
           buyerId,
           orderId,
           orderItemId,
@@ -201,7 +202,8 @@ export const create = async (buyerId, productUuid, input) => {
       repository.create(
         {
           rating: input.rating,
-          comment: input.comment,
+          title: input.title,
+          description: input.description,
           buyerId,
           orderId: input.orderId,
           orderItemId: input.orderItemId,

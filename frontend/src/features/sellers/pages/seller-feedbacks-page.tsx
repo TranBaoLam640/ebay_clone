@@ -9,19 +9,22 @@ import { messageFromError } from '@/features/auth/utils/auth-errors';
 import { useSellerFeedbacks, useSellerFeedbackSummary } from '../hooks/use-seller-feedback';
 import { SellerFeedbackDetail } from '../components/seller-feedback-detail';
 
-type SellerUser = {
-  sellerId?: string | null;
-  sellerProfileId?: string | null;
-  sellerProfile?: { id?: string | null; _id?: string | null } | null;
-};
-
 export default function SellerFeedbacksPage() {
   const { t } = useTranslation();
-  const { user } = useAuth();
+  const { isLoading } = useAuth();
   const [page, setPage] = useState(1);
-  const sellerId = currentSellerId(user as SellerUser | null);
+  const sellerId = undefined;
   const feedbacks = useSellerFeedbacks(sellerId, { page, limit: 10 });
   const summary = useSellerFeedbackSummary(sellerId);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-32 w-full rounded-xl" />
+      </div>
+    );
+  }
 
   if (!sellerId) {
     return (
@@ -86,15 +89,5 @@ export default function SellerFeedbacksPage() {
         </div>
       )}
     </div>
-  );
-}
-
-function currentSellerId(user: SellerUser | null): string | undefined {
-  return (
-    user?.sellerId ??
-    user?.sellerProfileId ??
-    user?.sellerProfile?.id ??
-    user?.sellerProfile?._id ??
-    undefined
   );
 }

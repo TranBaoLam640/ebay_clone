@@ -3,10 +3,16 @@ import { env } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { logger } from './config/logger.js';
 import { startAuctionSweep } from './modules/auctions/auction-sweep.js';
+import { startAutomatedFeedbackSweep } from './modules/seller-feedbacks/seller-feedback-automation.js';
 import { initSocket } from './socket/socket.js';
 const start = async () => {
   await connectDatabase();
   startAuctionSweep(env.AUCTION_SWEEP_INTERVAL_MS);
+  if (env.SELLER_FEEDBACK_AUTO_ENABLED)
+    startAutomatedFeedbackSweep({
+      delayMs: env.SELLER_FEEDBACK_AUTO_DELAY_MS,
+      intervalMs: env.SELLER_FEEDBACK_AUTO_SWEEP_INTERVAL_MS,
+    });
   const server = app.listen(env.PORT, () =>
     logger.info({ port: env.PORT }, 'server started'),
   );

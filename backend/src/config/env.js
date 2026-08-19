@@ -74,6 +74,16 @@ const schema = z
     // How often the in-process sweep closes ended auctions. Multi-replica-safe:
     // only one pod's atomic OPEN→CLOSED claim wins per auction.
     AUCTION_SWEEP_INTERVAL_MS: positiveInteger(15000),
+    SELLER_FEEDBACK_AUTO_ENABLED: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((value) =>
+        value === undefined ? undefined : value === 'true',
+      ),
+    // Project demo simplification: automated positive seller feedback waits
+    // two minutes after delivery, then an in-process sweep scans for work.
+    SELLER_FEEDBACK_AUTO_DELAY_MS: positiveInteger(120000),
+    SELLER_FEEDBACK_AUTO_SWEEP_INTERVAL_MS: positiveInteger(30000),
     PAYPAL_SIMULATION_ENABLED: boolean.default('true'),
     // Cloudflare R2 object storage for avatar, product image, and attachment uploads.
     R2_ENDPOINT: optionalString,
@@ -176,6 +186,8 @@ const schema = z
   .transform((config) => ({
     ...config,
     SWAGGER_ENABLED: config.SWAGGER_ENABLED ?? config.NODE_ENV !== 'production',
+    SELLER_FEEDBACK_AUTO_ENABLED:
+      config.SELLER_FEEDBACK_AUTO_ENABLED ?? config.NODE_ENV !== 'test',
   }));
 export const loadConfig = (source = process.env) => schema.parse(source);
 export const env = loadConfig();

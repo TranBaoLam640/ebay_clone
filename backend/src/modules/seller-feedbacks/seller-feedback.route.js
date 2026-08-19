@@ -5,11 +5,13 @@ import { feedbackImages } from '../uploads/upload.middleware.js';
 import * as controller from './seller-feedback.controller.js';
 import {
   awaitingSellerFeedbackSchema,
+  createFeedbackRevisionRequestSchema,
   createOrderItemSellerFeedbackSchema,
   createSellerFeedbackSchema,
   deleteSellerFeedbackSchema,
   getOrderItemSellerFeedbackSchema,
   listSellerFeedbacksSchema,
+  respondToFeedbackRevisionRequestSchema,
   respondToSellerFeedbackSchema,
   updateSellerFeedbackSchema,
 } from './seller-feedback.validation.js';
@@ -65,6 +67,20 @@ sellerFeedbackRoute.post(
   authenticate,
   validate(respondToSellerFeedbackSchema),
   controller.respond,
+);
+
+sellerFeedbackRoute.post(
+  '/:feedbackId/revision-request',
+  authenticate,
+  validate(createFeedbackRevisionRequestSchema),
+  controller.createRevisionRequest,
+);
+
+sellerFeedbackRoute.post(
+  '/:feedbackId/revision-request/respond',
+  authenticate,
+  validate(respondToFeedbackRevisionRequestSchema),
+  controller.respondToRevisionRequest,
 );
 
 sellerFeedbackRoute.patch(

@@ -20,6 +20,14 @@ const feedbackFields = {
   shippingAndHandlingChargesRating: optionalRating,
   shippingRating: optionalRating,
 };
+const revisionFeedbackFields = {
+  commentType: z.enum(['POSITIVE', 'NEUTRAL', 'NEGATIVE']),
+  commentText,
+  itemAsDescribedRating: optionalRating,
+  communicationRating: optionalRating,
+  shippingTimeRating: optionalRating,
+  shippingAndHandlingChargesRating: optionalRating,
+};
 
 export const createSellerFeedbackSchema = z
   .object({
@@ -93,6 +101,34 @@ export const awaitingSellerFeedbackSchema = z
 export const respondToSellerFeedbackSchema = z
   .object({
     body: z.object({ commentText: z.string().trim().min(1).max(500) }).strict(),
+    params: z.object({ feedbackId: objectId }).strict(),
+    query: z.object({}).strict(),
+  })
+  .strict();
+
+export const createFeedbackRevisionRequestSchema = z
+  .object({
+    body: emptyBody,
+    params: z.object({ feedbackId: objectId }).strict(),
+    query: z.object({}).strict(),
+  })
+  .strict();
+
+export const respondToFeedbackRevisionRequestSchema = z
+  .object({
+    body: z
+      .discriminatedUnion('decision', [
+        z
+          .object({
+            decision: z.literal('ACCEPT'),
+            feedback: z.object(revisionFeedbackFields).strict(),
+          })
+          .strict(),
+        z.object({ decision: z.literal('DECLINE') }).strict(),
+      ])
+      .refine((body) => body.decision !== 'ACCEPT' || Boolean(body.feedback), {
+        message: 'feedback is required when accepting a revision request',
+      }),
     params: z.object({ feedbackId: objectId }).strict(),
     query: z.object({}).strict(),
   })

@@ -42,8 +42,8 @@ describe('Swagger documentation', () => {
   it('contains exactly the expected unique operation inventory', async () => {
     const document = await getDocument();
     const inventory = getRouteInventory(document);
-    expect(inventory).toHaveLength(73);
-    expect(Object.keys(document.paths)).toHaveLength(61);
+    expect(inventory).toHaveLength(75);
+    expect(Object.keys(document.paths)).toHaveLength(63);
     expect(new Set(inventory)).toEqual(new Set(EXPECTED_ROUTE_INVENTORY));
     const operationIds = getOperations(document).map(
       ({ operation: item }) => item.operationId,

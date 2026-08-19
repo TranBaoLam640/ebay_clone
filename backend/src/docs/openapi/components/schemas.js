@@ -259,6 +259,50 @@ export const schemas = {
       commentText: { type: 'string', minLength: 1, maxLength: 500 },
     },
   },
+  CreateFeedbackRevisionRequest: {
+    type: 'object',
+    additionalProperties: false,
+    description:
+      'Empty body. Sellers may request one revision for BUYER neutral/negative feedback within 30 days of submittedAt.',
+  },
+  FeedbackRevisionDecisionRequest: {
+    oneOf: [
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['decision', 'feedback'],
+        properties: {
+          decision: { type: 'string', enum: ['ACCEPT'] },
+          feedback: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['commentType'],
+            properties: {
+              commentType: {
+                type: 'string',
+                enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'],
+              },
+              commentText: { type: 'string', maxLength: 500 },
+              itemAsDescribedRating: rating,
+              communicationRating: rating,
+              shippingTimeRating: rating,
+              shippingAndHandlingChargesRating: rating,
+            },
+            description:
+              'Replacement canonical feedback fields only. Images and transaction identity are unchanged.',
+          },
+        },
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['decision'],
+        properties: {
+          decision: { type: 'string', enum: ['DECLINE'] },
+        },
+      },
+    ],
+  },
   UpdateSellerFeedbackRequest: {
     type: 'object',
     minProperties: 1,
@@ -466,6 +510,17 @@ export const schemas = {
         enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'],
       },
       commentText: { type: 'string', maxLength: 500 },
+      source: {
+        type: 'string',
+        enum: ['BUYER', 'AUTOMATED'],
+        description:
+          'Server-controlled. AUTOMATED is created only by the backend 2-minute demo sweep.',
+      },
+      submittedAt: {
+        ...timestamp,
+        description:
+          'Effective feedback submission timestamp. Legacy records fall back to createdAt.',
+      },
       rating,
       comment: { type: 'string', deprecated: true },
       itemAsDescribedRating: rating,
@@ -484,6 +539,21 @@ export const schemas = {
         properties: {
           commentText: { type: 'string', maxLength: 500 },
           createdAt: timestamp,
+        },
+      },
+      revisionRequest: {
+        type: 'object',
+        nullable: true,
+        description:
+          'One request total per feedback. PENDING expires after 10 days; expired pending requests are exposed as EXPIRED.',
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED'],
+          },
+          requestedAt: timestamp,
+          expiresAt: timestamp,
+          respondedAt: nullableTimestamp,
         },
       },
       buyer: { type: 'object', properties: { fullName: { type: 'string' } } },

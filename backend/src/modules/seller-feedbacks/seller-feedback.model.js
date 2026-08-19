@@ -39,6 +39,13 @@ const sellerFeedbackSchema = new mongoose.Schema(
       enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'],
     },
     commentText: { type: String, trim: true, maxlength: 500 },
+    source: {
+      type: String,
+      enum: ['BUYER', 'AUTOMATED'],
+      default: 'BUYER',
+      required: true,
+    },
+    submittedAt: { type: Date, default: Date.now },
     // Legacy compatibility for existing seller aggregate/UI behavior.
     rating: optionalRating,
     itemAsDescribedRating: optionalRating,
@@ -65,6 +72,15 @@ const sellerFeedbackSchema = new mongoose.Schema(
     sellerResponse: {
       commentText: { type: String, trim: true, maxlength: 500 },
       createdAt: Date,
+    },
+    revisionRequest: {
+      status: {
+        type: String,
+        enum: ['PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED'],
+      },
+      requestedAt: Date,
+      expiresAt: Date,
+      respondedAt: Date,
     },
   },
   { timestamps: true },

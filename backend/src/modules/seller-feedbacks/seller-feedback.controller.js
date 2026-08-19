@@ -82,6 +82,33 @@ export const respond = async (req, res, next) => {
   }
 };
 
+export const createRevisionRequest = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.createRevisionRequest(req.user.id, req.params.feedbackId),
+      201,
+    );
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const respondToRevisionRequest = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.respondToRevisionRequest(
+        req.user.id,
+        req.params.feedbackId,
+        req.validated.body,
+      ),
+    );
+  } catch (e) {
+    next(e);
+  }
+};
+
 export const update = async (req, res, next) => {
   try {
     success(

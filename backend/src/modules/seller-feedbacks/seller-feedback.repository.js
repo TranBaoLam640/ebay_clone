@@ -25,6 +25,8 @@ const publicPipeline = (includeTransaction = false) => [
       commentType: 1,
       commentText: 1,
       comment: '$commentText',
+      source: { $ifNull: ['$source', 'BUYER'] },
+      submittedAt: { $ifNull: ['$submittedAt', '$createdAt'] },
       rating: 1,
       itemAsDescribedRating: 1,
       communicationRating: 1,
@@ -33,6 +35,29 @@ const publicPipeline = (includeTransaction = false) => [
       shippingRating: 1,
       images: 1,
       sellerResponse: 1,
+      revisionRequest: {
+        $cond: [
+          { $ifNull: ['$revisionRequest.status', false] },
+          {
+            status: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$revisionRequest.status', 'PENDING'] },
+                    { $lt: ['$revisionRequest.expiresAt', '$$NOW'] },
+                  ],
+                },
+                'EXPIRED',
+                '$revisionRequest.status',
+              ],
+            },
+            requestedAt: '$revisionRequest.requestedAt',
+            expiresAt: '$revisionRequest.expiresAt',
+            respondedAt: '$revisionRequest.respondedAt',
+          },
+          '$$REMOVE',
+        ],
+      },
       buyer: { fullName: '$buyer.fullName', avatarUrl: '$buyer.avatarUrl' },
       createdAt: 1,
       updatedAt: 1,
@@ -55,6 +80,16 @@ export const transaction = async (work) => {
 
 export const create = async (data, session) =>
   (await SellerFeedback.create([data], { session }))[0];
+
+export const replaceAutomatedWithBuyer = (_id, buyerId, data, session) =>
+  SellerFeedback.findOneAndUpdate(
+    { _id, buyerId, source: 'AUTOMATED' },
+    {
+      $set: data,
+      $unset: { revisionRequest: '' },
+    },
+    { returnDocument: 'after', runValidators: true, session },
+  );
 
 export const findByOrderItem = (orderId, orderItemId, session) =>
   SellerFeedback.findOne({ orderId, orderItemId })
@@ -88,6 +123,65 @@ export const respondOnce = (_id, sellerId, commentText, session) =>
     { $set: { sellerResponse: { commentText, createdAt: new Date() } } },
     { returnDocument: 'after', runValidators: true, session },
   );
+
+export const createRevisionRequest = (_id, sellerId, revisionRequest) =>
+  SellerFeedback.findOneAndUpdate(
+    {
+      _id,
+      sellerId,
+      revisionRequest: { $exists: false },
+    },
+    { $set: { revisionRequest } },
+    { returnDocument: 'after', runValidators: true },
+  );
+
+export const acceptRevisionRequest = (_id, buyerId, feedback, now, session) =>
+  SellerFeedback.findOneAndUpdate(
+    {
+      _id,
+      buyerId,
+      'revisionRequest.status': 'PENDING',
+      'revisionRequest.expiresAt': { $gte: now },
+    },
+    {
+      $set: {
+        ...feedback,
+        source: 'BUYER',
+        submittedAt: now,
+        'revisionRequest.status': 'ACCEPTED',
+        'revisionRequest.respondedAt': now,
+      },
+    },
+    { returnDocument: 'after', runValidators: true, session },
+  );
+
+export const declineRevisionRequest = (_id, buyerId, now, session) =>
+  SellerFeedback.findOneAndUpdate(
+    {
+      _id,
+      buyerId,
+      'revisionRequest.status': 'PENDING',
+      'revisionRequest.expiresAt': { $gte: now },
+    },
+    {
+      $set: {
+        'revisionRequest.status': 'DECLINED',
+        'revisionRequest.respondedAt': now,
+      },
+    },
+    { returnDocument: 'after', runValidators: true, session },
+  );
+
+export const expireRevisionRequest = (_id, now) =>
+  SellerFeedback.findOneAndUpdate(
+    {
+      _id,
+      'revisionRequest.status': 'PENDING',
+      'revisionRequest.expiresAt': { $lt: now },
+    },
+    { $set: { 'revisionRequest.status': 'EXPIRED' } },
+    { returnDocument: 'after', runValidators: true },
+  ).lean();
 
 export const aggregateForSeller = async (sellerId, session) => {
   const [result] = await SellerFeedback.aggregate([

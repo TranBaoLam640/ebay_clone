@@ -28,6 +28,11 @@ const forbidden = (message) =>
 const DAY_MS = 86_400_000;
 const SOURCE_DELIVERED_OR_EXPECTED_DAYS = 60;
 const SOURCE_PURCHASE_FALLBACK_DAYS = 90;
+export const AUTO_FEEDBACK_DELAY_MS = 120000;
+export const AUTO_FEEDBACK_COMMENT = 'Automated positive feedback';
+const AUTO_FEEDBACK_BATCH_SIZE = 100;
+const REVISION_REQUEST_DAYS = 30;
+const REVISION_RESPONSE_DAYS = 10;
 
 const normalizeInput = (input) => {
   const out = { ...input };
@@ -37,6 +42,28 @@ const normalizeInput = (input) => {
   }
   return out;
 };
+
+const normalizeBuyerFeedbackInput = (input) => ({
+  ...normalizeInput(input),
+  source: 'BUYER',
+  submittedAt: new Date(),
+});
+
+const sourceOf = (feedback) => feedback.source || 'BUYER';
+const submittedAtOf = (feedback) =>
+  feedback.submittedAt ? new Date(feedback.submittedAt) : feedback.createdAt;
+
+const revisionMissing = () =>
+  new AppError(
+    404,
+    ERROR_CODES.NOT_FOUND,
+    'Feedback revision request not found',
+  );
+
+const revisionConflict = (message) =>
+  new AppError(409, ERROR_CODES.CONFLICT, message);
+
+const isDuplicateKey = (error) => error?.code === 11000;
 
 export const feedbackDeadline = (order) => {
   const expectedDeliveryDate = order.expectedDeliveryDate
@@ -126,26 +153,63 @@ const createResolved = async (buyerId, order, item, input, files = []) => {
   await verifySeller(item.sellerId, buyerId);
   assertWithinFeedbackPeriod(order);
   const images = await uploadFeedbackImages(files);
+  const data = {
+    ...normalizeBuyerFeedbackInput(input),
+    images,
+    buyerId,
+    orderId: order._id,
+    orderItemId: item._id,
+    sellerId: item.sellerId,
+    productId: item.productId,
+  };
   try {
     return await repository.transaction(async (session) => {
-      const feedback = await repository.create(
-        {
-          ...normalizeInput(input),
-          images,
-          buyerId,
-          orderId: order._id,
-          orderItemId: item._id,
-          sellerId: item.sellerId,
-          productId: item.productId,
-        },
+      const existing = await repository.findByOrderItem(
+        order._id,
+        item._id,
         session,
       );
+      if (existing) {
+        if (sourceOf(existing) !== 'AUTOMATED') throw conflict();
+        const replaced = await repository.replaceAutomatedWithBuyer(
+          existing._id,
+          buyerId,
+          data,
+          session,
+        );
+        if (!replaced) throw conflict();
+        await persistAggregate(item.sellerId, session);
+        return repository.toPublic(replaced, session);
+      }
+      const feedback = await repository.create(data, session);
       await persistAggregate(item.sellerId, session);
       return repository.toPublic(feedback, session);
     });
   } catch (error) {
+    if (isDuplicateKey(error)) {
+      const existing = await repository.findByOrderItem(order._id, item._id);
+      if (existing && sourceOf(existing) === 'AUTOMATED') {
+        try {
+          return await repository.transaction(async (session) => {
+            const replaced = await repository.replaceAutomatedWithBuyer(
+              existing._id,
+              buyerId,
+              data,
+              session,
+            );
+            if (!replaced) throw conflict();
+            await persistAggregate(item.sellerId, session);
+            return repository.toPublic(replaced, session);
+          });
+        } catch (replaceError) {
+          await cleanupFeedbackImages(images);
+          throw replaceError;
+        }
+      }
+      await cleanupFeedbackImages(images);
+      throw conflict();
+    }
     await cleanupFeedbackImages(images);
-    if (error?.code === 11000) throw conflict();
     throw error;
   }
 };
@@ -256,8 +320,20 @@ export const awaiting = async (buyerId) => {
   });
 };
 
-export const update = (buyerId, feedbackId, input) =>
-  repository.transaction(async (session) => {
+export const update = async (buyerId, feedbackId, input) => {
+  const existing = await repository.findById(feedbackId);
+  if (!existing || String(existing.buyerId) !== String(buyerId))
+    throw missing();
+  if (sourceOf(existing) === 'AUTOMATED')
+    throw revisionConflict('Automated feedback cannot be edited directly');
+  if (existing.revisionRequest?.status === 'PENDING') {
+    if (new Date() > new Date(existing.revisionRequest.expiresAt)) {
+      await repository.expireRevisionRequest(feedbackId, new Date());
+    } else {
+      throw revisionConflict('Feedback revision request is pending');
+    }
+  }
+  return repository.transaction(async (session) => {
     const feedback = await repository.updateOwned(
       buyerId,
       feedbackId,
@@ -268,9 +344,15 @@ export const update = (buyerId, feedbackId, input) =>
     await persistAggregate(feedback.sellerId, session);
     return repository.toPublic(feedback, session);
   });
+};
 
 export const remove = async (buyerId, feedbackId) => {
   let images = [];
+  const existing = await repository.findById(feedbackId);
+  if (!existing || String(existing.buyerId) !== String(buyerId))
+    throw missing();
+  if (sourceOf(existing) === 'AUTOMATED')
+    throw revisionConflict('Automated feedback cannot be deleted directly');
   const result = await repository.transaction(async (session) => {
     const feedback = await repository.deleteOwned(buyerId, feedbackId, session);
     if (!feedback) throw missing();
@@ -330,4 +412,124 @@ export const respond = async (userId, feedbackId, input) => {
       'Seller response already exists for this feedback',
     );
   return repository.toPublic(updated);
+};
+
+export const createRevisionRequest = async (userId, feedbackId) => {
+  const feedback = await repository.findById(feedbackId);
+  if (!feedback) throw missing();
+  const seller = await sellerRepository.findByUserId(userId);
+  if (!seller || String(seller._id) !== String(feedback.sellerId))
+    throw forbidden('Only the feedback seller can request revision');
+  if (sourceOf(feedback) === 'AUTOMATED')
+    throw revisionConflict(
+      'Automated feedback cannot receive revision request',
+    );
+  if (feedback.revisionRequest)
+    throw revisionConflict('Feedback revision request already exists');
+  if (!['NEUTRAL', 'NEGATIVE'].includes(feedback.commentType))
+    throw revisionConflict(
+      'Feedback revision is only available for neutral or negative feedback',
+    );
+
+  const submittedAt = submittedAtOf(feedback);
+  const now = new Date();
+  if (
+    !submittedAt ||
+    now > new Date(submittedAt.getTime() + REVISION_REQUEST_DAYS * DAY_MS)
+  )
+    throw revisionConflict('Feedback revision request period has expired');
+
+  const updated = await repository.createRevisionRequest(
+    feedbackId,
+    seller._id,
+    {
+      status: 'PENDING',
+      requestedAt: now,
+      expiresAt: new Date(now.getTime() + REVISION_RESPONSE_DAYS * DAY_MS),
+    },
+  );
+  if (!updated)
+    throw revisionConflict('Feedback revision request already exists');
+  return repository.toPublic(updated);
+};
+
+export const respondToRevisionRequest = async (userId, feedbackId, input) => {
+  const feedback = await repository.findById(feedbackId);
+  if (!feedback) throw missing();
+  if (String(feedback.buyerId) !== String(userId))
+    throw forbidden('Only the feedback buyer can respond to revision request');
+  const revision = feedback.revisionRequest;
+  if (!revision) throw revisionMissing();
+  const now = new Date();
+  if (revision.status !== 'PENDING')
+    throw revisionConflict('Feedback revision request is no longer pending');
+  if (now > new Date(revision.expiresAt)) {
+    await repository.expireRevisionRequest(feedbackId, now);
+    throw revisionConflict('Feedback revision request has expired');
+  }
+
+  return repository.transaction(async (session) => {
+    const updated =
+      input.decision === 'ACCEPT'
+        ? await repository.acceptRevisionRequest(
+            feedbackId,
+            userId,
+            normalizeInput(input.feedback),
+            now,
+            session,
+          )
+        : await repository.declineRevisionRequest(
+            feedbackId,
+            userId,
+            now,
+            session,
+          );
+    if (!updated)
+      throw revisionConflict('Feedback revision request is no longer pending');
+    await persistAggregate(updated.sellerId, session);
+    return repository.toPublic(updated, session);
+  });
+};
+
+export const processAutomatedPositiveFeedback = async ({
+  now = new Date(),
+  delayMs = AUTO_FEEDBACK_DELAY_MS,
+  limit = AUTO_FEEDBACK_BATCH_SIZE,
+} = {}) => {
+  const cutoff = new Date(now.getTime() - delayMs);
+  const items = await orderRepository.findAutomatedFeedbackEligibleItems({
+    cutoff,
+    limit,
+  });
+  let created = 0;
+  for (const item of items) {
+    try {
+      await repository.transaction(async (session) => {
+        await repository.create(
+          {
+            orderId: item.orderId,
+            orderItemId: item.orderItemId,
+            buyerId: item.buyerId,
+            sellerId: item.sellerId,
+            productId: item.productId,
+            commentType: 'POSITIVE',
+            commentText: AUTO_FEEDBACK_COMMENT,
+            source: 'AUTOMATED',
+            submittedAt: now,
+            images: [],
+          },
+          session,
+        );
+        await persistAggregate(item.sellerId, session);
+      });
+      created += 1;
+    } catch (error) {
+      if (isDuplicateKey(error)) continue;
+      logger.error(
+        { error, orderId: item.orderId, orderItemId: item.orderItemId },
+        'automated seller feedback failed',
+      );
+    }
+  }
+  return { created };
 };

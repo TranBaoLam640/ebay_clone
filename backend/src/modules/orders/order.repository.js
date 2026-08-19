@@ -251,6 +251,70 @@ export const deliveredWithItemsForFeedback = (buyerId) =>
     .lean()
     .exec();
 
+export const findAutomatedFeedbackEligibleItems = ({ cutoff, limit = 100 }) =>
+  Order.aggregate([
+    {
+      $match: {
+        orderStatus: 'DELIVERED',
+        $or: [
+          { deliveredAt: { $lte: cutoff } },
+          { deliveredAt: { $exists: false }, createdAt: { $lte: cutoff } },
+          { deliveredAt: null, createdAt: { $lte: cutoff } },
+        ],
+      },
+    },
+    { $unwind: '$items' },
+    {
+      $lookup: {
+        from: 'sellerprofiles',
+        localField: 'items.sellerId',
+        foreignField: '_id',
+        as: 'seller',
+      },
+    },
+    { $unwind: '$seller' },
+    {
+      $match: {
+        $expr: { $ne: ['$buyerId', '$seller.userId'] },
+      },
+    },
+    {
+      $lookup: {
+        from: 'sellerfeedbacks',
+        let: { orderId: '$_id', orderItemId: '$items._id' },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$orderId', '$$orderId'] },
+                  { $eq: ['$orderItemId', '$$orderItemId'] },
+                ],
+              },
+            },
+          },
+          { $project: { _id: 1 } },
+        ],
+        as: 'feedback',
+      },
+    },
+    { $match: { feedback: { $size: 0 } } },
+    { $sort: { deliveredAt: 1, createdAt: 1, _id: 1 } },
+    { $limit: limit },
+    {
+      $project: {
+        _id: 0,
+        orderId: '$_id',
+        orderItemId: '$items._id',
+        buyerId: 1,
+        sellerId: '$items.sellerId',
+        sellerUserId: '$seller.userId',
+        productId: '$items.productId',
+        referenceAt: { $ifNull: ['$deliveredAt', '$createdAt'] },
+      },
+    },
+  ]);
+
 export const findDeliveredSellerOrder = ({ buyerId, orderId, sellerId }) => {
   const filter = {
     _id: orderId,

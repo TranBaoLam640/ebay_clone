@@ -47,6 +47,8 @@ export const EXPECTED_ROUTE_INVENTORY = [
   'GET /api/v1/orders/{orderId}/items/{orderItemId}/seller-feedback',
   'POST /api/v1/orders/{orderId}/items/{orderItemId}/seller-feedback',
   'POST /api/v1/seller-feedbacks/{feedbackId}/response',
+  'POST /api/v1/seller-feedbacks/{feedbackId}/revision-request',
+  'POST /api/v1/seller-feedbacks/{feedbackId}/revision-request/respond',
   'PATCH /api/v1/seller-feedbacks/{feedbackId}',
   'DELETE /api/v1/seller-feedbacks/{feedbackId}',
   'GET /api/v1/cart',

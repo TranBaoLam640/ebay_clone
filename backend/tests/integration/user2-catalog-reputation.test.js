@@ -20,6 +20,7 @@ let mongo;
 let passwordHash;
 let models;
 let ids;
+let sellerFeedbackService;
 
 vi.mock('../../src/modules/uploads/storage-client.js', () => ({
   isStorageConfigured: true,
@@ -81,6 +82,43 @@ const feedbackInput = (overrides = {}) => ({
   shippingAndHandlingChargesRating: 4,
   ...overrides,
 });
+
+const createDeliveredOrderItem = async ({
+  buyerId = ids.buyer,
+  sellerId = ids.seller,
+  productId = ids.product,
+  createdAt = new Date(),
+  deliveredAt,
+} = {}) => {
+  const orderId = new mongoose.Types.ObjectId();
+  const orderItemId = new mongoose.Types.ObjectId();
+  await models.Order.create({
+    _id: orderId,
+    buyerId,
+    sellerId,
+    orderStatus: 'DELIVERED',
+    ...(deliveredAt && { deliveredAt }),
+    items: [
+      {
+        _id: orderItemId,
+        productId,
+        sellerId,
+        quantity: 1,
+      },
+    ],
+  });
+  await models.Order.updateOne(
+    { _id: orderId },
+    {
+      $set: {
+        createdAt,
+        updatedAt: createdAt,
+        ...(deliveredAt && { deliveredAt }),
+      },
+    },
+  );
+  return { orderId, orderItemId };
+};
 
 const seed = async () => {
   const objectId = () => new mongoose.Types.ObjectId();
@@ -366,6 +404,8 @@ beforeAll(async () => {
   };
   passwordHash = await hashPassword(password);
   await Promise.all(Object.values(models).map((model) => model.init()));
+  sellerFeedbackService =
+    await import('../../src/modules/seller-feedbacks/seller-feedback.service.js');
   ({ app } = await import('../../src/app.js'));
 });
 
@@ -1205,6 +1245,663 @@ describe('User 2 catalog and reputation', () => {
         'Seller response already exists for this feedback',
       );
     });
+  });
+
+  it('summarizes only seller feedback and excludes missing DSR values from averages', async () => {
+    const buyer = await login('buyer@example.test');
+    await mutate(buyer, 'post', `/products/${ids.productUuid}/reviews`, {
+      ...reviewInput(),
+      rating: 1,
+    }).then(({ status }) => expect(status).toBe(201));
+
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({
+        commentType: 'POSITIVE',
+        itemAsDescribedRating: 4,
+        communicationRating: 5,
+        shippingTimeRating: 3,
+        shippingAndHandlingChargesRating: 2,
+      }),
+    ).then(({ status }) => expect(status).toBe(201));
+
+    const secondOrder = new mongoose.Types.ObjectId();
+    const secondItem = new mongoose.Types.ObjectId();
+    await models.Order.create({
+      _id: secondOrder,
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      orderStatus: 'DELIVERED',
+      items: [
+        {
+          _id: secondItem,
+          productId: ids.product,
+          sellerId: ids.seller,
+          quantity: 1,
+        },
+      ],
+    });
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${secondOrder}/items/${secondItem}/seller-feedback`,
+      feedbackInput({
+        commentType: 'NEGATIVE',
+        itemAsDescribedRating: 2,
+        communicationRating: undefined,
+        shippingTimeRating: undefined,
+        shippingAndHandlingChargesRating: undefined,
+      }),
+    ).then(({ status }) => expect(status).toBe(201));
+
+    await request(app)
+      .get(`${prefix}/sellers/${ids.seller}/feedback-summary`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data.totalFeedbackCount).toBe(2);
+        expect(body.data.counts).toEqual({
+          POSITIVE: 1,
+          NEUTRAL: 0,
+          NEGATIVE: 1,
+        });
+        expect(body.data.averageDetailedSellerRatings).toEqual({
+          itemAsDescribed: 3,
+          communication: 5,
+          shippingTime: 3,
+          shippingAndHandlingCharges: 2,
+        });
+      });
+  });
+
+  it('creates revision requests for neutral and negative feedback and enforces request eligibility', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const unrelatedSeller = await login('inactive-seller@example.test');
+
+    const negative = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE' }),
+    );
+    expect(negative.status).toBe(201);
+
+    await mutate(
+      unrelatedSeller,
+      'post',
+      `/seller-feedbacks/${negative.body.data.id}/revision-request`,
+      {},
+    ).then(({ status, body }) => {
+      expect(status).toBe(403);
+      expect(body.error.message).toBe(
+        'Only the feedback seller can request revision',
+      );
+    });
+
+    const requested = await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${negative.body.data.id}/revision-request`,
+      {},
+    );
+    expect(requested.status).toBe(201);
+    expect(requested.body.data.revisionRequest.status).toBe('PENDING');
+    expect(
+      new Date(requested.body.data.revisionRequest.expiresAt).getTime() -
+        new Date(requested.body.data.revisionRequest.requestedAt).getTime(),
+    ).toBe(10 * 86_400_000);
+
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${negative.body.data.id}/revision-request`,
+      {},
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Feedback revision request already exists',
+      );
+    });
+
+    const positiveOrder = await createDeliveredOrderItem();
+    const positive = await mutate(
+      buyer,
+      'post',
+      `/orders/${positiveOrder.orderId}/items/${positiveOrder.orderItemId}/seller-feedback`,
+      feedbackInput({ commentType: 'POSITIVE' }),
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${positive.body.data.id}/revision-request`,
+      {},
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Feedback revision is only available for neutral or negative feedback',
+      );
+    });
+
+    const neutralOrder = await createDeliveredOrderItem();
+    const neutral = await mutate(
+      buyer,
+      'post',
+      `/orders/${neutralOrder.orderId}/items/${neutralOrder.orderItemId}/seller-feedback`,
+      feedbackInput({ commentType: 'NEUTRAL' }),
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${neutral.body.data.id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(201));
+
+    const expiredOrder = await createDeliveredOrderItem();
+    const expired = await mutate(
+      buyer,
+      'post',
+      `/orders/${expiredOrder.orderId}/items/${expiredOrder.orderItemId}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE' }),
+    );
+    await models.SellerFeedback.updateOne(
+      { _id: expired.body.data.id },
+      { $set: { submittedAt: new Date(Date.now() - 31 * 86_400_000) } },
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${expired.body.data.id}/revision-request`,
+      {},
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Feedback revision request period has expired',
+      );
+    });
+
+    const automatedOrder = await createDeliveredOrderItem({
+      deliveredAt: new Date(Date.now() - 180_000),
+    });
+    await sellerFeedbackService.processAutomatedPositiveFeedback({
+      now: new Date(),
+    });
+    const automated = await models.SellerFeedback.findOne({
+      orderItemId: automatedOrder.orderItemId,
+    }).lean();
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${automated._id}/revision-request`,
+      {},
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Automated feedback cannot receive revision request',
+      );
+    });
+  });
+
+  it('does not apply a yearly revision quota across separate feedback records', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    for (let index = 0; index < 6; index += 1) {
+      const { orderId, orderItemId } = await createDeliveredOrderItem();
+      const feedback = await mutate(
+        buyer,
+        'post',
+        `/orders/${orderId}/items/${orderItemId}/seller-feedback`,
+        feedbackInput({ commentType: 'NEUTRAL' }),
+      );
+      await mutate(
+        seller,
+        'post',
+        `/seller-feedbacks/${feedback.body.data.id}/revision-request`,
+        {},
+      ).then(({ status }) => expect(status).toBe(201));
+    }
+  });
+
+  it('lets the buyer accept a pending revision atomically without changing transaction identity', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const feedback = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE', commentText: 'Problem' }),
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(201));
+
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/revision-request/respond`,
+      { decision: 'DECLINE' },
+    ).then(({ status, body }) => {
+      expect(status).toBe(403);
+      expect(body.error.message).toBe(
+        'Only the feedback buyer can respond to revision request',
+      );
+    });
+
+    const accepted = await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/revision-request/respond`,
+      {
+        decision: 'ACCEPT',
+        feedback: {
+          commentType: 'POSITIVE',
+          commentText: 'Seller resolved the problem.',
+          itemAsDescribedRating: 5,
+          communicationRating: 5,
+          shippingTimeRating: 4,
+          shippingAndHandlingChargesRating: 4,
+          sellerId: String(ids.inactiveSeller),
+        },
+      },
+    );
+    expect(accepted.status).toBe(400);
+
+    const cleanAccepted = await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/revision-request/respond`,
+      {
+        decision: 'ACCEPT',
+        feedback: {
+          commentType: 'POSITIVE',
+          commentText: 'Seller resolved the problem.',
+          itemAsDescribedRating: 5,
+          communicationRating: 5,
+          shippingTimeRating: 4,
+          shippingAndHandlingChargesRating: 4,
+        },
+      },
+    );
+    expect(cleanAccepted.status).toBe(200);
+    expect(cleanAccepted.body.data).toEqual(
+      expect.objectContaining({
+        id: feedback.body.data.id,
+        orderId: String(ids.order),
+        orderItemId: String(ids.orderItem),
+        buyer: { fullName: 'Buyer One' },
+        sellerId: String(ids.seller),
+        productId: String(ids.product),
+        source: 'BUYER',
+        commentType: 'POSITIVE',
+        commentText: 'Seller resolved the problem.',
+      }),
+    );
+    expect(cleanAccepted.body.data.revisionRequest.status).toBe('ACCEPTED');
+
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/revision-request`,
+      {},
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Feedback revision request already exists',
+      );
+    });
+  });
+
+  it('lets the buyer decline, expires pending revisions lazily, and serializes competing decisions', async () => {
+    const buyer = await login('buyer@example.test');
+    const other = await login('other@example.test');
+    const seller = await login('seller@example.test');
+
+    const declineOrder = await createDeliveredOrderItem();
+    const declined = await mutate(
+      buyer,
+      'post',
+      `/orders/${declineOrder.orderId}/items/${declineOrder.orderItemId}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE', commentText: 'Original' }),
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${declined.body.data.id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(201));
+    await mutate(
+      other,
+      'post',
+      `/seller-feedbacks/${declined.body.data.id}/revision-request/respond`,
+      { decision: 'DECLINE' },
+    ).then(({ status }) => expect(status).toBe(403));
+    const decline = await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${declined.body.data.id}/revision-request/respond`,
+      { decision: 'DECLINE' },
+    );
+    expect(decline.status).toBe(200);
+    expect(decline.body.data).toEqual(
+      expect.objectContaining({
+        commentType: 'NEGATIVE',
+        commentText: 'Original',
+      }),
+    );
+    expect(decline.body.data.revisionRequest.status).toBe('DECLINED');
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${declined.body.data.id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(409));
+
+    const expiredOrder = await createDeliveredOrderItem();
+    const expired = await mutate(
+      buyer,
+      'post',
+      `/orders/${expiredOrder.orderId}/items/${expiredOrder.orderItemId}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE' }),
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${expired.body.data.id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(201));
+    await models.SellerFeedback.updateOne(
+      { _id: expired.body.data.id },
+      {
+        $set: {
+          'revisionRequest.expiresAt': new Date(Date.now() - 1_000),
+        },
+      },
+    );
+    await buyer
+      .get(
+        `${prefix}/orders/${expiredOrder.orderId}/items/${expiredOrder.orderItemId}/seller-feedback`,
+      )
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data.feedback.revisionRequest.status).toBe('EXPIRED');
+      });
+    await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${expired.body.data.id}/revision-request/respond`,
+      { decision: 'DECLINE' },
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe('Feedback revision request has expired');
+    });
+    expect(
+      (await models.SellerFeedback.findById(expired.body.data.id).lean())
+        .revisionRequest.status,
+    ).toBe('EXPIRED');
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${expired.body.data.id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(409));
+
+    const raceOrder = await createDeliveredOrderItem();
+    const race = await mutate(
+      buyer,
+      'post',
+      `/orders/${raceOrder.orderId}/items/${raceOrder.orderItemId}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE' }),
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${race.body.data.id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(201));
+    const [acceptRace, declineRace] = await Promise.all([
+      mutate(
+        buyer,
+        'post',
+        `/seller-feedbacks/${race.body.data.id}/revision-request/respond`,
+        {
+          decision: 'ACCEPT',
+          feedback: {
+            commentType: 'POSITIVE',
+            commentText: 'Fixed.',
+          },
+        },
+      ),
+      mutate(
+        buyer,
+        'post',
+        `/seller-feedbacks/${race.body.data.id}/revision-request/respond`,
+        { decision: 'DECLINE' },
+      ),
+    ]);
+    expect([acceptRace.status, declineRace.status].sort()).toEqual([200, 409]);
+    expect(
+      (await models.SellerFeedback.findById(race.body.data.id).lean())
+        .revisionRequest.status,
+    ).toMatch(/ACCEPTED|DECLINED/);
+  });
+
+  it('processes automated positive feedback eligibility and duplicate races without fabricating DSR', async () => {
+    const now = new Date();
+    const beforeDelay = await createDeliveredOrderItem({
+      deliveredAt: new Date(now.getTime() - 60_000),
+    });
+    const afterDelay = await createDeliveredOrderItem({
+      deliveredAt: new Date(now.getTime() - 180_000),
+    });
+    const deliveredAtOrder = await createDeliveredOrderItem({
+      createdAt: now,
+      deliveredAt: new Date(now.getTime() - 180_000),
+    });
+    await mutate(
+      await login('buyer@example.test'),
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'POSITIVE' }),
+    ).then(({ status }) => expect(status).toBe(201));
+
+    const self = await createDeliveredOrderItem({
+      buyerId: ids.sellerUser,
+      deliveredAt: new Date(now.getTime() - 180_000),
+    });
+    const [firstRun, secondRun] = await Promise.all([
+      sellerFeedbackService.processAutomatedPositiveFeedback({ now }),
+      sellerFeedbackService.processAutomatedPositiveFeedback({ now }),
+    ]);
+    expect(firstRun.created + secondRun.created).toBe(2);
+    expect(
+      await models.SellerFeedback.countDocuments({
+        orderItemId: {
+          $in: [afterDelay.orderItemId, deliveredAtOrder.orderItemId],
+        },
+        source: 'AUTOMATED',
+      }),
+    ).toBe(2);
+    expect(
+      await models.SellerFeedback.exists({
+        orderItemId: beforeDelay.orderItemId,
+      }),
+    ).toBeNull();
+    expect(
+      await models.SellerFeedback.exists({ orderItemId: self.orderItemId }),
+    ).toBeNull();
+    const automated = await models.SellerFeedback.findOne({
+      orderItemId: afterDelay.orderItemId,
+    }).lean();
+    expect(automated).toEqual(
+      expect.objectContaining({
+        commentType: 'POSITIVE',
+        commentText: 'Automated positive feedback',
+        source: 'AUTOMATED',
+      }),
+    );
+    expect(automated.itemAsDescribedRating).toBeUndefined();
+    expect(automated.communicationRating).toBeUndefined();
+    expect(automated.shippingTimeRating).toBeUndefined();
+    expect(automated.shippingAndHandlingChargesRating).toBeUndefined();
+  });
+
+  it('lets manual buyer feedback replace automated feedback, including multipart images, while preserving one record', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const oldOrder = await createDeliveredOrderItem({
+      deliveredAt: new Date(Date.now() - 180_000),
+    });
+    await sellerFeedbackService.processAutomatedPositiveFeedback({
+      now: new Date(),
+    });
+    const automated = await models.SellerFeedback.findOne({
+      orderItemId: oldOrder.orderItemId,
+    }).lean();
+    expect(automated.source).toBe('AUTOMATED');
+
+    const replacement = await uploadFeedback(
+      buyer,
+      oldOrder.orderId,
+      oldOrder.orderItemId,
+      feedbackInput({
+        commentType: 'NEGATIVE',
+        commentText: 'Buyer supplied real feedback.',
+      }),
+      [{ name: 'replacement.jpg', mime: 'image/jpeg', size: 32 }],
+    );
+    expect(replacement.status).toBe(201);
+    expect(replacement.body.data).toEqual(
+      expect.objectContaining({
+        id: String(automated._id),
+        orderId: String(oldOrder.orderId),
+        orderItemId: String(oldOrder.orderItemId),
+        sellerId: String(ids.seller),
+        productId: String(ids.product),
+        source: 'BUYER',
+        commentType: 'NEGATIVE',
+        commentText: 'Buyer supplied real feedback.',
+      }),
+    );
+    expect(replacement.body.data.images).toHaveLength(1);
+    const replaced = await models.SellerFeedback.findById(automated._id).lean();
+    expect(replaced.submittedAt.getTime()).toBeGreaterThan(
+      automated.submittedAt.getTime(),
+    );
+    expect(
+      await models.SellerFeedback.countDocuments({
+        orderId: oldOrder.orderId,
+        orderItemId: oldOrder.orderItemId,
+      }),
+    ).toBe(1);
+
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${oldOrder.orderId}/items/${oldOrder.orderItemId}/seller-feedback`,
+      feedbackInput({ commentType: 'POSITIVE' }),
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Seller feedback already exists for this order item',
+      );
+    });
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${automated._id}/revision-request`,
+      {},
+    ).then(({ status }) => expect(status).toBe(201));
+  });
+
+  it('keeps manual feedback authoritative in a manual-vs-auto race and blocks direct automated edits', async () => {
+    const buyer = await login('buyer@example.test');
+    const raceOrder = await createDeliveredOrderItem({
+      deliveredAt: new Date(Date.now() - 180_000),
+    });
+    const [autoResult, manualResult] = await Promise.all([
+      sellerFeedbackService.processAutomatedPositiveFeedback({
+        now: new Date(),
+      }),
+      mutate(
+        buyer,
+        'post',
+        `/orders/${raceOrder.orderId}/items/${raceOrder.orderItemId}/seller-feedback`,
+        feedbackInput({ commentType: 'NEGATIVE' }),
+      ),
+    ]);
+    expect(autoResult.created).toBeLessThanOrEqual(1);
+    expect(manualResult.status).toBe(201);
+    const finalFeedback = await models.SellerFeedback.findOne({
+      orderItemId: raceOrder.orderItemId,
+    }).lean();
+    expect(finalFeedback.source).toBe('BUYER');
+    expect(finalFeedback.commentType).toBe('NEGATIVE');
+    expect(
+      await models.SellerFeedback.countDocuments({
+        orderItemId: raceOrder.orderItemId,
+      }),
+    ).toBe(1);
+
+    const autoOnlyOrder = await createDeliveredOrderItem({
+      deliveredAt: new Date(Date.now() - 180_000),
+    });
+    await sellerFeedbackService.processAutomatedPositiveFeedback({
+      now: new Date(),
+    });
+    const autoOnly = await models.SellerFeedback.findOne({
+      orderItemId: autoOnlyOrder.orderItemId,
+    }).lean();
+    await mutate(buyer, 'patch', `/seller-feedbacks/${autoOnly._id}`, {
+      commentType: 'NEGATIVE',
+    }).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Automated feedback cannot be edited directly',
+      );
+    });
+    await mutate(buyer, 'delete', `/seller-feedbacks/${autoOnly._id}`).then(
+      ({ status, body }) => {
+        expect(status).toBe(409);
+        expect(body.error.message).toBe(
+          'Automated feedback cannot be deleted directly',
+        );
+      },
+    );
+  });
+
+  it('rejects client-controlled seller feedback identity, source, submittedAt, and revision state fields', async () => {
+    const buyer = await login('buyer@example.test');
+    const forbiddenFields = [
+      { sellerId: String(ids.inactiveSeller) },
+      { buyerId: String(ids.otherBuyer) },
+      { productId: String(ids.outOfStockProduct) },
+      { source: 'AUTOMATED' },
+      { submittedAt: new Date().toISOString() },
+      { revisionRequest: { status: 'ACCEPTED' } },
+    ];
+    for (const fields of forbiddenFields) {
+      const { orderId, orderItemId } = await createDeliveredOrderItem();
+      await mutate(
+        buyer,
+        'post',
+        `/orders/${orderId}/items/${orderItemId}/seller-feedback`,
+        { ...feedbackInput(), ...fields },
+      ).then(({ status }) => expect(status).toBe(400));
+    }
+
+    const feedback = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE' }),
+    );
+    await mutate(buyer, 'patch', `/seller-feedbacks/${feedback.body.data.id}`, {
+      source: 'AUTOMATED',
+    }).then(({ status }) => expect(status).toBe(400));
   });
 
   it('accepts optional feedback images and deletes them when feedback is removed', async () => {

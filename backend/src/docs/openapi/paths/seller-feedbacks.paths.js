@@ -116,6 +116,8 @@ export const sellerFeedbackPaths = {
       tag: 'Seller Feedback',
       operationId: 'createOrderItemSellerFeedback',
       summary: 'Review the seller for an order item',
+      description:
+        'Creates BUYER seller feedback for a delivered order item. If a project demo automated POSITIVE feedback already exists, this manual buyer feedback atomically replaces it and preserves the same orderId + orderItemId identity.',
       parameters: [idParam('orderId'), idParam('orderItemId')],
       requestBody: jsonBody({
         $ref: '#/components/schemas/CreateSellerFeedbackRequest',
@@ -131,6 +133,8 @@ export const sellerFeedbackPaths = {
       tag: 'Seller Feedback',
       operationId: 'updateSellerFeedback',
       summary: 'Update seller feedback',
+      description:
+        'Buyer-owned manual feedback update. AUTOMATED feedback cannot be edited directly; submit normal leave-feedback for the order item to replace it. Pending revision requests block ordinary PATCH.',
       parameters: [idParam('feedbackId')],
       requestBody: body({
         $ref: '#/components/schemas/UpdateSellerFeedbackRequest',
@@ -162,6 +166,45 @@ export const sellerFeedbackPaths = {
         ref('SellerFeedback'),
       ),
       errors: [400, 401, 403, 404, 409, 413, 429, 500],
+      security: security.unsafe,
+    }),
+  },
+  '/seller-feedbacks/{feedbackId}/revision-request': {
+    post: operation({
+      tag: 'Seller Feedback',
+      operationId: 'createFeedbackRevisionRequest',
+      summary: 'Request a feedback revision',
+      description:
+        'Seller-only request for BUYER NEUTRAL or NEGATIVE feedback. One revision request total per feedback. Request must be within 30 days of submittedAt, falling back to createdAt for legacy feedback. No yearly quota is implemented.',
+      parameters: [idParam('feedbackId')],
+      requestBody: body({
+        $ref: '#/components/schemas/CreateFeedbackRevisionRequest',
+      }),
+      success: response(
+        'Feedback revision request created',
+        ref('SellerFeedback'),
+      ),
+      successStatus: 201,
+      errors: [400, 401, 403, 404, 409, 429, 500],
+      security: security.unsafe,
+    }),
+  },
+  '/seller-feedbacks/{feedbackId}/revision-request/respond': {
+    post: operation({
+      tag: 'Seller Feedback',
+      operationId: 'respondToFeedbackRevisionRequest',
+      summary: 'Accept or decline a feedback revision request',
+      description:
+        'Buyer-only decision for a PENDING revision request before expiresAt. ACCEPT updates canonical feedback fields and leaves images unchanged. DECLINE keeps original feedback unchanged. PENDING requests expire after 10 days.',
+      parameters: [idParam('feedbackId')],
+      requestBody: body({
+        $ref: '#/components/schemas/FeedbackRevisionDecisionRequest',
+      }),
+      success: response(
+        'Feedback revision request responded to',
+        ref('SellerFeedback'),
+      ),
+      errors: [400, 401, 403, 404, 409, 429, 500],
       security: security.unsafe,
     }),
   },

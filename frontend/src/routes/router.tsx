@@ -24,6 +24,7 @@ const NotificationsPage = lazy(() => import('@/features/notifications/pages/noti
 const MessagesPage = lazy(() => import('@/features/messages/pages/messages-page'));
 const MyBidsPage = lazy(() => import('@/features/account/pages/my-bids-page'));
 const MyOffersPage = lazy(() => import('@/features/account/pages/my-offers-page'));
+const SellerFeedbacksPage = lazy(() => import('@/features/sellers/pages/seller-feedbacks-page'));
 const CheckoutPage = lazy(() => import('@/features/checkout/pages/checkout-page'));
 const OrdersPage = lazy(() => import('@/features/checkout/pages/orders-page'));
 const OrderDetailPage = lazy(() => import('@/features/checkout/pages/order-detail-page'));
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
               { path: 'orders/:orderId/checkout', element: <Lazy><CheckoutOrderPage /></Lazy> },
               { path: 'bids', element: <Lazy><MyBidsPage /></Lazy> },
               { path: 'offers', element: <Lazy><MyOffersPage /></Lazy> },
+              { path: 'seller-feedbacks', element: <Lazy><SellerFeedbacksPage /></Lazy> },
               { path: 'notifications', element: <Lazy><NotificationsPage /></Lazy> },
             ],
           },

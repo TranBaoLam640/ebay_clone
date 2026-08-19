@@ -23,5 +23,6 @@ export const paths = {
     notifications: '/account/notifications',
     bids: '/account/bids',
     offers: '/account/offers',
+    sellerFeedbacks: '/account/seller-feedbacks',
   },
 } as const;

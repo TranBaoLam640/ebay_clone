@@ -9,11 +9,7 @@ import { useReturns } from '../hooks/use-returns';
 import { ReturnRequestForm, type ReturnFormValue } from '../components/return-request-form';
 import { useReviewMutations } from '@/features/product-detail/hooks/use-review-mutations';
 import { ReviewForm } from '@/features/product-detail/components/review-form';
-import { sellerApi } from '@/features/sellers/services/seller-api';
-import {
-  SellerFeedbackForm,
-  type SellerFeedbackValue,
-} from '@/features/sellers/components/seller-feedback-form';
+import { OrderItemSellerFeedbackActions } from '@/features/sellers/components/order-item-seller-feedback-actions';
 import { Price } from '@/components/price';
 import { Icon } from '@/components/icon';
 import { Modal } from '@/components/modal';
@@ -40,16 +36,9 @@ export default function OrderDetailPage() {
 
   const { create: createReview } = useReviewMutations();
   const { list: returns, create: createReturn } = useReturns();
-  // Review modal targets one item; return & seller feedback are per-order.
+  // Review modal targets one item; returns remain per-order.
   const [reviewItem, setReviewItem] = useState<OrderItem | null>(null);
   const [returnOpen, setReturnOpen] = useState(false);
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-  // Track a just-submitted feedback so the section flips to "rated" instantly.
-  const [feedbackDone, setFeedbackDone] = useState(false);
-  const createFeedback = useMutation({
-    mutationFn: (input: SellerFeedbackValue) =>
-      sellerApi.createFeedback(orderId!, input),
-  });
   const contactSeller = useMutation({
     mutationFn: (productId: string) => messagingApi.createConversation({ productId, orderId: orderId! }),
     onSuccess: (conversation) => window.location.assign(paths.message(conversation.id)),
@@ -116,19 +105,6 @@ export default function OrderDetailPage() {
       });
       notify(t('returns.submittedToast'), 'success');
       setReturnOpen(false);
-    } catch (err) {
-      notify(messageFromError(err), 'error');
-    }
-  };
-
-  const submitFeedback = async (value: SellerFeedbackValue) => {
-    try {
-      await createFeedback.mutateAsync(value);
-      notify(t('sellerFeedback.submittedToast'), 'success');
-      setFeedbackDone(true);
-      setFeedbackOpen(false);
-      // Refresh so `sellerRated` persists the disabled state across reloads.
-      order.refetch();
     } catch (err) {
       notify(messageFromError(err), 'error');
     }
@@ -250,6 +226,11 @@ export default function OrderDetailPage() {
                         <Icon variant="icon-mail" size={14} />
                         Contact Seller
                       </Button>
+                      <OrderItemSellerFeedbackActions
+                        orderId={o.id}
+                        orderItemId={it.id}
+                        sellerId={o.sellerId}
+                      />
                     </div>
                   )}
                 </div>
@@ -330,49 +311,6 @@ export default function OrderDetailPage() {
           )}
         </section>
       )}
-
-      {/* Seller feedback: one per order once delivered. Keep the button after
-          rating but disable it — `sellerRated` (backend) survives a reload,
-          `feedbackDone` flips it the instant this session submits. */}
-      {canReviewOrReturn && (
-        <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 text-sm font-bold text-text">
-            <Icon variant="icon-user" size={16} />
-            {t('sellerFeedback.sectionTitle')}
-          </div>
-          {(() => {
-            const rated = feedbackDone || o.sellerRated;
-            return (
-              <div className="flex flex-col gap-1 sm:items-end">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  fullWidth
-                  className="sm:w-auto"
-                  disabled={rated}
-                  onClick={() => setFeedbackOpen(true)}
-                >
-                  <Icon variant={rated ? 'icon-check' : 'icon-star'} size={14} />
-                  {rated ? t('sellerFeedback.rated') : t('sellerFeedback.rateSeller')}
-                </Button>
-                {rated && <p className="text-xs text-muted">{t('sellerFeedback.thanks')}</p>}
-              </div>
-            );
-          })()}
-        </section>
-      )}
-
-      <Modal
-        open={feedbackOpen}
-        onClose={() => setFeedbackOpen(false)}
-        title={t('sellerFeedback.modalTitle')}
-      >
-        <SellerFeedbackForm
-          submitting={createFeedback.isPending}
-          onSubmit={submitFeedback}
-          onCancel={() => setFeedbackOpen(false)}
-        />
-      </Modal>
 
       <Modal
         open={!!reviewItem}

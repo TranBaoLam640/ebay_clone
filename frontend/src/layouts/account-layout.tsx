@@ -15,6 +15,7 @@ export function AccountLayout() {
     { to: paths.messages, label: t('account.navMessages'), icon: 'icon-mail' },
     { to: paths.account.bids, label: t('account.navBids'), icon: 'icon-tag' },
     { to: paths.account.offers, label: t('account.navOffers'), icon: 'icon-gift' },
+    { to: paths.account.sellerFeedbacks, label: t('account.navSellerFeedbacks'), icon: 'icon-star' },
     { to: paths.account.password, label: t('account.navPassword'), icon: 'icon-shield' },
     { to: paths.account.addresses, label: t('account.navAddresses'), icon: 'icon-map-pin' },
     { to: paths.account.notifications, label: t('account.navNotifications'), icon: 'icon-bell' },

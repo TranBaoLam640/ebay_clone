@@ -115,6 +115,8 @@ export interface OrderItem {
   productUuid: string | null;
   /** Whether this line already has a product review (one review per item). */
   reviewed: boolean;
+  /** Whether this line already has SellerFeedback; UI fetches detail to handle automated replacement. */
+  sellerFeedbacked: boolean;
   quantity: number;
   /** Snapshot fields stored on the order — render these directly (no product fetch needed). */
   title: string | null;
@@ -159,6 +161,7 @@ function normalizeOrder<T extends OrderSummary>(raw: Record<string, unknown>): T
       productId: it.productId as string,
       productUuid: (it.productUuid ?? null) as string | null,
       reviewed: Boolean(it.reviewed),
+      sellerFeedbacked: Boolean(it.sellerFeedbacked),
       quantity: it.quantity as number,
       title: (it.title ?? null) as string | null,
       image: (it.image ?? null) as string | null,

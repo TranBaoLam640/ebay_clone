@@ -1,69 +1,156 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/button';
 import { RatingInput } from '@/components/rating-input';
 import { Textarea } from '@/components/textarea';
-import { Button } from '@/components/button';
+import { cn } from '@/utils/cn';
+import {
+  type SellerFeedback,
+  type SellerFeedbackCommentType,
+  type SellerFeedbackFields,
+} from '../services/seller-feedback-api';
+import { SellerFeedbackImagePicker } from './seller-feedback-image-picker';
 
-export interface SellerFeedbackValue {
-  rating: number;
-  comment?: string;
+export interface SellerFeedbackValue extends SellerFeedbackFields {
+  images?: File[];
 }
 
 interface SellerFeedbackFormProps {
+  mode?: 'create' | 'edit' | 'revision';
+  initialValue?: SellerFeedback | null;
   submitting?: boolean;
+  allowImages?: boolean;
   onSubmit: (value: SellerFeedbackValue) => void;
   onCancel: () => void;
 }
 
-const MAX_COMMENT = 2000;
+const MAX_COMMENT = 500;
+const SENTIMENTS: SellerFeedbackCommentType[] = ['POSITIVE', 'NEUTRAL', 'NEGATIVE'];
 
-/** Rate the seller (star + optional comment). Rating is required (1–5). */
-export function SellerFeedbackForm({ submitting, onSubmit, onCancel }: SellerFeedbackFormProps) {
+export function SellerFeedbackForm({
+  mode = 'create',
+  initialValue,
+  submitting,
+  allowImages = mode === 'create',
+  onSubmit,
+  onCancel,
+}: SellerFeedbackFormProps) {
   const { t } = useTranslation();
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [commentType, setCommentType] = useState<SellerFeedbackCommentType>('POSITIVE');
+  const [commentText, setCommentText] = useState('');
+  const [itemAsDescribedRating, setItemAsDescribedRating] = useState(0);
+  const [communicationRating, setCommunicationRating] = useState(0);
+  const [shippingTimeRating, setShippingTimeRating] = useState(0);
+  const [shippingAndHandlingChargesRating, setShippingAndHandlingChargesRating] = useState(0);
+  const [images, setImages] = useState<File[]>([]);
+
+  useEffect(() => {
+    if (!initialValue) return;
+    setCommentType(initialValue.commentType ?? 'POSITIVE');
+    setCommentText(initialValue.commentText ?? initialValue.comment ?? '');
+    setItemAsDescribedRating(initialValue.itemAsDescribedRating ?? 0);
+    setCommunicationRating(initialValue.communicationRating ?? 0);
+    setShippingTimeRating(initialValue.shippingTimeRating ?? 0);
+    setShippingAndHandlingChargesRating(initialValue.shippingAndHandlingChargesRating ?? 0);
+  }, [initialValue]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (rating < 1) {
-      setError(t('sellerFeedback.ratingRequired'));
-      return;
-    }
-    setError(null);
-    onSubmit({ rating, comment: comment.trim() || undefined });
+    const payload: SellerFeedbackValue = {
+      commentType,
+      commentText: commentText.trim() || undefined,
+      ...(itemAsDescribedRating > 0 ? { itemAsDescribedRating } : {}),
+      ...(communicationRating > 0 ? { communicationRating } : {}),
+      ...(shippingTimeRating > 0 ? { shippingTimeRating } : {}),
+      ...(shippingAndHandlingChargesRating > 0 ? { shippingAndHandlingChargesRating } : {}),
+      ...(allowImages && images.length ? { images } : {}),
+    };
+    onSubmit(payload);
   };
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium text-text">{t('sellerFeedback.yourRating')}</span>
-        <RatingInput
-          value={rating}
-          onChange={(v) => {
-            setRating(v);
-            setError(null);
-          }}
-        />
-        {error && <p className="text-xs text-danger">{error}</p>}
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-medium text-text">{t('sellerFeedback.sentiment')}</span>
+        <div className="grid grid-cols-3 gap-2">
+          {SENTIMENTS.map((sentiment) => (
+            <button
+              key={sentiment}
+              type="button"
+              onClick={() => setCommentType(sentiment)}
+              className={cn(
+                'h-10 rounded-md border px-2 text-sm font-semibold transition-colors',
+                commentType === sentiment
+                  ? 'border-primary bg-primary text-white'
+                  : 'border-border bg-surface text-text hover:bg-surface-2',
+              )}
+            >
+              {t(`sellerFeedback.commentType.${sentiment}`)}
+            </button>
+          ))}
+        </div>
       </div>
 
       <Textarea
         label={t('sellerFeedback.commentLabel')}
         placeholder={t('sellerFeedback.commentPlaceholder')}
-        value={comment}
+        value={commentText}
         maxLength={MAX_COMMENT}
-        onChange={(e) => setComment(e.target.value)}
+        onChange={(e) => setCommentText(e.target.value)}
       />
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <DsrField
+          label={t('sellerFeedback.itemAsDescribed')}
+          value={itemAsDescribedRating}
+          onChange={setItemAsDescribedRating}
+        />
+        <DsrField
+          label={t('sellerFeedback.communication')}
+          value={communicationRating}
+          onChange={setCommunicationRating}
+        />
+        <DsrField
+          label={t('sellerFeedback.shippingTime')}
+          value={shippingTimeRating}
+          onChange={setShippingTimeRating}
+        />
+        <DsrField
+          label={t('sellerFeedback.shippingAndHandlingCharges')}
+          value={shippingAndHandlingChargesRating}
+          onChange={setShippingAndHandlingChargesRating}
+        />
+      </div>
+
+      {allowImages && (
+        <SellerFeedbackImagePicker value={images} onChange={setImages} disabled={submitting} />
+      )}
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>
           {t('sellerFeedback.cancel')}
         </Button>
         <Button type="submit" loading={submitting}>
-          {t('sellerFeedback.submit')}
+          {t(`sellerFeedback.${mode === 'create' ? 'submit' : 'saveFeedback'}`)}
         </Button>
       </div>
     </form>
+  );
+}
+
+function DsrField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium text-text">{label}</span>
+      <RatingInput value={value} onChange={onChange} size={22} />
+    </div>
   );
 }

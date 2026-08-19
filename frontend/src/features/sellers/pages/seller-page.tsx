@@ -3,14 +3,16 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { sellerApi } from '../services/seller-api';
+import { useSellerFeedbacks, useSellerFeedbackSummary } from '../hooks/use-seller-feedback';
+import { SellerFeedbackDetail } from '../components/seller-feedback-detail';
 import { catalogApi } from '@/features/catalog/services/catalog-api';
 import { Avatar } from '@/components/avatar';
+import { Badge } from '@/components/badge';
 import { Rating } from '@/components/rating';
 import { Pagination } from '@/components/pagination';
 import { Skeleton } from '@/components/skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { ProductGrid } from '@/features/catalog/components/product-grid';
-import { formatRelative } from '@/utils/format-date';
 
 /** Seller storefront: profile header, their products, and buyer feedback. */
 export default function SellerPage() {
@@ -30,11 +32,8 @@ export default function SellerPage() {
     enabled: !!sellerId,
   });
 
-  const feedbackQuery = useQuery({
-    queryKey: ['seller-feedbacks', sellerId, fbPage],
-    queryFn: () => sellerApi.feedbacks(sellerId!, { page: fbPage, limit: 10 }),
-    enabled: !!sellerId,
-  });
+  const feedbackQuery = useSellerFeedbacks(sellerId, { page: fbPage, limit: 10 });
+  const summaryQuery = useSellerFeedbackSummary(sellerId);
 
   if (profileQuery.isLoading) {
     return (
@@ -60,7 +59,28 @@ export default function SellerPage() {
         <Avatar src={seller.avatarUrl} name={seller.displayName} size={72} />
         <div className="flex-1">
           <h1 className="text-2xl font-extrabold text-text">{seller.displayName}</h1>
-          <Rating value={seller.averageFeedbackRating} count={seller.feedbackCount} showValue className="mt-1" />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Badge tone="primary">
+              {t('sellerFeedback.totalCount', {
+                count: summaryQuery.data?.totalFeedbackCount ?? seller.feedbackCount,
+              })}
+            </Badge>
+            <Badge tone="success">
+              {t('sellerFeedback.countPositive', {
+                count: summaryQuery.data?.counts.POSITIVE ?? 0,
+              })}
+            </Badge>
+            <Badge tone="neutral">
+              {t('sellerFeedback.countNeutral', {
+                count: summaryQuery.data?.counts.NEUTRAL ?? 0,
+              })}
+            </Badge>
+            <Badge tone="danger">
+              {t('sellerFeedback.countNegative', {
+                count: summaryQuery.data?.counts.NEGATIVE ?? 0,
+              })}
+            </Badge>
+          </div>
           {seller.description && <p className="mt-2 text-sm text-muted">{seller.description}</p>}
         </div>
       </header>
@@ -81,21 +101,28 @@ export default function SellerPage() {
         ) : (feedbackQuery.data?.items.length ?? 0) === 0 ? (
           <EmptyState icon="icon-star" title={t('seller.noReviews')} />
         ) : (
-          <ul className="flex flex-col divide-y divide-border">
+          <ul className="flex flex-col gap-4">
             {feedbackQuery.data!.items.map((fb) => (
-              <li key={fb.id} className="flex gap-3 py-4">
-                <Avatar src={fb.buyer.avatarUrl} name={fb.buyer.fullName} size={40} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-text">{fb.buyer.fullName}</span>
-                    <span className="text-xs text-muted">{formatRelative(fb.createdAt)}</span>
-                  </div>
-                  <Rating value={fb.rating} size={14} className="my-1" />
-                  {fb.comment && <p className="text-sm text-text">{fb.comment}</p>}
-                </div>
+              <li key={fb.id}>
+                <SellerFeedbackDetail feedback={fb} compact />
               </li>
             ))}
           </ul>
+        )}
+
+        {summaryQuery.data && (
+          <div className="mt-6 grid gap-3 rounded-lg border border-border bg-surface p-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Object.entries(summaryQuery.data.averageDetailedSellerRatings).map(([key, value]) => (
+              <div key={key} className="flex flex-col gap-1">
+                <span className="text-xs text-muted">{t(`sellerFeedback.summary.${key}`)}</span>
+                {value == null ? (
+                  <span className="text-sm font-semibold text-muted">{t('sellerFeedback.noDsr')}</span>
+                ) : (
+                  <Rating value={value} size={14} showValue />
+                )}
+              </div>
+            ))}
+          </div>
         )}
 
         {feedbackQuery.data?.meta && (

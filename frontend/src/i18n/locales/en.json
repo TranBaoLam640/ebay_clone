@@ -513,7 +513,6 @@
     "sentiment": "Feedback",
     "commentLabel": "Comment (optional)",
     "commentPlaceholder": "How was your experience with this seller?",
-    "ratingRequired": "Please choose a star rating.",
     "submit": "Submit feedback",
     "saveFeedback": "Save feedback",
     "cancel": "Cancel",

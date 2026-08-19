@@ -743,6 +743,14 @@ export const schemas = {
         },
       },
       buyer: { type: 'object', properties: { fullName: { type: 'string' } } },
+      product: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: productUuid,
+          name: { type: 'string' },
+        },
+      },
       createdAt: timestamp,
       updatedAt: timestamp,
     },
@@ -787,6 +795,12 @@ export const schemas = {
     properties: {
       sellerId: objectId,
       totalFeedbackCount: { type: 'integer', minimum: 0 },
+      feedbackCount: {
+        type: 'integer',
+        minimum: 0,
+        description:
+          'BUYER-submitted SellerFeedback count; AUTOMATED feedback is excluded.',
+      },
       legacyAverageFeedbackRating: {
         type: 'number',
         minimum: 0,
@@ -800,8 +814,18 @@ export const schemas = {
           NEGATIVE: { type: 'integer', minimum: 0 },
         },
       },
+      positiveFeedbackPercentage: {
+        type: 'number',
+        nullable: true,
+        minimum: 0,
+        maximum: 100,
+        description:
+          'BUYER POSITIVE / (BUYER POSITIVE + BUYER NEGATIVE) * 100. AUTOMATED and NEUTRAL feedback are excluded. Null when there is no positive or negative BUYER feedback.',
+      },
       averageDetailedSellerRatings: {
         type: 'object',
+        description:
+          'All-time BUYER feedback DSR averages. Null DSR values and AUTOMATED feedback are excluded.',
         properties: {
           itemAsDescribed: { type: 'number', nullable: true },
           communication: { type: 'number', nullable: true },

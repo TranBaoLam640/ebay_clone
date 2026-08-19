@@ -48,6 +48,12 @@ export const sellerFeedbackPaths = {
         idParam('sellerId'),
         ...pageParams,
         query('rating', { type: 'integer', minimum: 1, maximum: 5 }),
+        query('commentType', {
+          type: 'string',
+          enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'],
+          description:
+            'Filters BUYER seller feedback by sentiment. Public seller reputation feedback excludes AUTOMATED feedback.',
+        }),
         query('sort', {
           type: 'string',
           enum: ['newest', 'oldest', 'rating_desc', 'rating_asc'],
@@ -63,6 +69,8 @@ export const sellerFeedbackPaths = {
       tag: 'Seller Feedback',
       operationId: 'getSellerFeedbackSummary',
       summary: 'Get seller feedback summary',
+      description:
+        'Seller reputation summary derived from BUYER SellerFeedback only. AUTOMATED feedback is excluded; neutral feedback is excluded from the positive percentage denominator.',
       parameters: [idParam('sellerId')],
       success: response(
         'Seller feedback summary',

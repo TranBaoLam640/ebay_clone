@@ -2065,11 +2065,13 @@ describe('User 2 catalog and reputation', () => {
       .expect(200)
       .then(({ body }) => {
         expect(body.data.totalFeedbackCount).toBe(1);
+        expect(body.data.feedbackCount).toBe(1);
         expect(body.data.counts).toEqual({
           POSITIVE: 0,
           NEUTRAL: 1,
           NEGATIVE: 0,
         });
+        expect(body.data.positiveFeedbackPercentage).toBeNull();
         expect(body.data.averageDetailedSellerRatings).toEqual(
           expect.objectContaining({ shippingTime: 3 }),
         );
@@ -2127,22 +2129,8 @@ describe('User 2 catalog and reputation', () => {
       }),
     ).then(({ status }) => expect(status).toBe(201));
 
-    const secondOrder = new mongoose.Types.ObjectId();
-    const secondItem = new mongoose.Types.ObjectId();
-    await models.Order.create({
-      _id: secondOrder,
-      buyerId: ids.buyer,
-      sellerId: ids.seller,
-      orderStatus: 'DELIVERED',
-      items: [
-        {
-          _id: secondItem,
-          productId: ids.product,
-          sellerId: ids.seller,
-          quantity: 1,
-        },
-      ],
-    });
+    const { orderId: secondOrder, orderItemId: secondItem } =
+      await createDeliveredOrderItem();
     await mutate(
       buyer,
       'post',
@@ -2156,22 +2144,66 @@ describe('User 2 catalog and reputation', () => {
       }),
     ).then(({ status }) => expect(status).toBe(201));
 
+    const { orderId: thirdOrder, orderItemId: thirdItem } =
+      await createDeliveredOrderItem();
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${thirdOrder}/items/${thirdItem}/seller-feedback`,
+      feedbackInput({
+        commentType: 'NEUTRAL',
+        itemAsDescribedRating: undefined,
+        communicationRating: undefined,
+        shippingTimeRating: undefined,
+        shippingAndHandlingChargesRating: undefined,
+      }),
+    ).then(({ status }) => expect(status).toBe(201));
+
+    await models.SellerFeedback.create({
+      orderId: new mongoose.Types.ObjectId(),
+      orderItemId: new mongoose.Types.ObjectId(),
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      productId: ids.product,
+      commentType: 'POSITIVE',
+      commentText: 'Automated positive feedback',
+      source: 'AUTOMATED',
+      submittedAt: new Date(),
+    });
+
     await request(app)
       .get(`${prefix}/sellers/${ids.seller}/feedback-summary`)
       .expect(200)
       .then(({ body }) => {
-        expect(body.data.totalFeedbackCount).toBe(2);
+        expect(body.data.totalFeedbackCount).toBe(3);
+        expect(body.data.feedbackCount).toBe(3);
         expect(body.data.counts).toEqual({
           POSITIVE: 1,
-          NEUTRAL: 0,
+          NEUTRAL: 1,
           NEGATIVE: 1,
         });
+        expect(body.data.positiveFeedbackPercentage).toBe(50);
         expect(body.data.averageDetailedSellerRatings).toEqual({
           itemAsDescribed: 3,
           communication: 5,
           shippingTime: 3,
           shippingAndHandlingCharges: 2,
         });
+      });
+
+    await request(app)
+      .get(`${prefix}/sellers/${ids.seller}/feedbacks?commentType=NEGATIVE`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.meta.totalItems).toBe(1);
+        expect(body.data[0]).toEqual(
+          expect.objectContaining({
+            commentType: 'NEGATIVE',
+            source: 'BUYER',
+            product: { id: ids.productUuid, name: 'Precision Laptop' },
+          }),
+        );
+        expect(body.data[0].buyer).not.toHaveProperty('email');
       });
   });
 

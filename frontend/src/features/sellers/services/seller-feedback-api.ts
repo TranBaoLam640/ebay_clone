@@ -50,6 +50,7 @@ export interface SellerFeedback {
   feedbackDeadline?: string;
   revisionRequest?: SellerFeedbackRevisionRequest;
   buyer?: { fullName: string; avatarUrl: string | null };
+  product?: { id: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -75,7 +76,9 @@ export interface AwaitingSellerFeedbackItem {
 export interface SellerFeedbackSummary {
   sellerId: string;
   totalFeedbackCount: number;
+  feedbackCount?: number;
   counts: Record<SellerFeedbackCommentType, number>;
+  positiveFeedbackPercentage: number | null;
   averageDetailedSellerRatings: {
     itemAsDescribed: number | null;
     communication: number | null;
@@ -101,6 +104,7 @@ export interface OrderItemSellerFeedbackResult {
 export interface SellerFeedbackListParams {
   page?: number;
   limit?: number;
+  commentType?: SellerFeedbackCommentType;
   sort?: 'newest' | 'oldest' | 'rating_desc' | 'rating_asc';
 }
 

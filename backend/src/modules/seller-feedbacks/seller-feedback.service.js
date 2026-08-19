@@ -365,6 +365,7 @@ export const listPublic = async (sellerId, query) => {
   const { page, limit } = pagination(query);
   const result = await repository.listPublic(sellerId, {
     rating: query.rating,
+    commentType: query.commentType,
     sort: query.sort,
     skip: (page - 1) * limit,
     limit,

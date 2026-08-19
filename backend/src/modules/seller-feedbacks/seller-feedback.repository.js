@@ -61,6 +61,13 @@ const publicPipeline = (includeTransaction = false) => [
         ],
       },
       buyer: { fullName: '$buyer.fullName', avatarUrl: '$buyer.avatarUrl' },
+      product: {
+        $cond: [
+          { $ifNull: ['$product._id', false] },
+          { id: '$product.uuid', name: '$product.title' },
+          '$$REMOVE',
+        ],
+      },
       createdAt: 1,
       updatedAt: 1,
     },
@@ -199,7 +206,12 @@ export const expireRevisionRequest = (_id, now) =>
 
 export const aggregateForSeller = async (sellerId, session) => {
   const [result] = await SellerFeedback.aggregate([
-    { $match: { sellerId: new mongoose.Types.ObjectId(sellerId) } },
+    {
+      $match: {
+        sellerId: new mongoose.Types.ObjectId(sellerId),
+        source: 'BUYER',
+      },
+    },
     {
       $group: {
         _id: null,
@@ -220,9 +232,16 @@ export const aggregateForSeller = async (sellerId, session) => {
   return result || { averageFeedbackRating: 0, feedbackCount: 0 };
 };
 
-export const listPublic = async (sellerId, { rating, sort, skip, limit }) => {
-  const match = { sellerId: new mongoose.Types.ObjectId(sellerId) };
+export const listPublic = async (
+  sellerId,
+  { rating, commentType, sort, skip, limit },
+) => {
+  const match = {
+    sellerId: new mongoose.Types.ObjectId(sellerId),
+    source: 'BUYER',
+  };
   if (rating !== undefined) match.rating = rating;
+  if (commentType) match.commentType = commentType;
   const sorts = {
     newest: { createdAt: -1, _id: -1 },
     oldest: { createdAt: 1, _id: 1 },
@@ -237,6 +256,16 @@ export const listPublic = async (sellerId, { rating, sort, skip, limit }) => {
           { $sort: sorts[sort] || sorts.newest },
           { $skip: skip },
           { $limit: limit },
+          {
+            $lookup: {
+              from: 'products',
+              localField: 'productId',
+              foreignField: '_id',
+              pipeline: [{ $project: { _id: 1, uuid: 1, title: 1 } }],
+              as: 'product',
+            },
+          },
+          { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
           ...publicPipeline(false),
         ],
         total: [{ $count: 'value' }],
@@ -249,6 +278,16 @@ export const listPublic = async (sellerId, { rating, sort, skip, limit }) => {
 export const toPublic = async (feedback, session) => {
   const [item] = await SellerFeedback.aggregate([
     { $match: { _id: feedback._id } },
+    {
+      $lookup: {
+        from: 'products',
+        localField: 'productId',
+        foreignField: '_id',
+        pipeline: [{ $project: { _id: 1, uuid: 1, title: 1 } }],
+        as: 'product',
+      },
+    },
+    { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
     ...publicPipeline(true),
   ]).session(session || null);
   return item;
@@ -256,7 +295,12 @@ export const toPublic = async (feedback, session) => {
 
 export const summaryForSeller = async (sellerId) => {
   const [result] = await SellerFeedback.aggregate([
-    { $match: { sellerId: new mongoose.Types.ObjectId(sellerId) } },
+    {
+      $match: {
+        sellerId: new mongoose.Types.ObjectId(sellerId),
+        source: 'BUYER',
+      },
+    },
     {
       $group: {
         _id: null,
@@ -304,12 +348,38 @@ export const summaryForSeller = async (sellerId) => {
             ],
           },
         },
+        positiveFeedbackPercentage: {
+          $let: {
+            vars: {
+              ratedCount: { $add: ['$positiveCount', '$negativeCount'] },
+            },
+            in: {
+              $cond: [
+                { $gt: ['$$ratedCount', 0] },
+                {
+                  $round: [
+                    {
+                      $multiply: [
+                        { $divide: ['$positiveCount', '$$ratedCount'] },
+                        100,
+                      ],
+                    },
+                    1,
+                  ],
+                },
+                null,
+              ],
+            },
+          },
+        },
       },
     },
   ]);
   return {
     totalFeedbackCount: result?.totalFeedbackCount || 0,
+    feedbackCount: result?.totalFeedbackCount || 0,
     counts: result?.counts || { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 },
+    positiveFeedbackPercentage: result?.positiveFeedbackPercentage ?? null,
     averageDetailedSellerRatings: result?.averageDetailedSellerRatings || {
       itemAsDescribed: null,
       communication: null,

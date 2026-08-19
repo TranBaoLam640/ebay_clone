@@ -159,6 +159,7 @@ export const listSellerFeedbacksSchema = z
         page: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().min(1).max(100).optional(),
         rating: z.coerce.number().int().min(1).max(5).optional(),
+        commentType: z.enum(['POSITIVE', 'NEUTRAL', 'NEGATIVE']).optional(),
         sort: z
           .enum(['newest', 'oldest', 'rating_desc', 'rating_asc'])
           .optional(),

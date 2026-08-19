@@ -36,7 +36,7 @@ export default function ProductDetailPage() {
   const { data: product, isLoading, isError } = useProduct(productId);
   const { add } = useCart();
   const { notify } = useToast();
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [qty, setQty] = useState(1);
   const contactSeller = useMutation({
@@ -47,6 +47,7 @@ export default function ProductDetailPage() {
   });
 
   const isAuction = product?.listingType === 'AUCTION';
+  const isOwnListing = user?.sellerProfile?.id === product?.seller.id;
   // Live per-buyer auction state (5s poll). Null for fixed-price listings.
   const auctionRealtime = useAuctionRealtime(
     product?.id ?? '',
@@ -153,7 +154,7 @@ export default function ProductDetailPage() {
                 auction={auctionRealtime}
                 isAuthenticated={isAuthenticated}
               />
-              <SellerCard seller={product.seller} />
+              <SellerCard seller={product.seller} productId={product.id} />
             </>
           ) : (
             <>
@@ -244,7 +245,7 @@ export default function ProductDetailPage() {
                       ? t('productDetail.outOfStock')
                       : t('productDetail.addToCart')}
                 </Button>
-                {isAuthenticated && (
+                {isAuthenticated && !isOwnListing && (
                   <Button
                     size="lg"
                     variant="secondary"
@@ -267,7 +268,7 @@ export default function ProductDetailPage() {
                 />
               )}
 
-              <SellerCard seller={product.seller} />
+              <SellerCard seller={product.seller} productId={product.id} />
             </>
           )}
         </div>

@@ -10,13 +10,14 @@ interface ModalProps {
   title?: string;
   children: ReactNode;
   footer?: ReactNode;
-  /** Max width of the dialog. Defaults to `md`; use `lg` for multi-column forms. */
-  size?: 'md' | 'lg';
+  /** Max width of the dialog. Defaults to `md`; use `lg`/`xl` for multi-column forms. */
+  size?: 'md' | 'lg' | 'xl';
 }
 
 const SIZES: Record<NonNullable<ModalProps['size']>, string> = {
   md: 'max-w-md',
   lg: 'max-w-2xl',
+  xl: 'max-w-5xl',
 };
 
 /** Accessible dialog rendered in a portal. Closes on Escape / backdrop click. */

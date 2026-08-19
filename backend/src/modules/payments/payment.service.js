@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { AppError } from '../../common/errors/app-error.js';
 import { ERROR_CODES } from '../../common/constants/error-codes.js';
 import { USER4_NOTIFICATION_EVENTS } from '../../common/constants/user4-notification-events.js';
+import { emailService } from '../../common/services/email.service.js';
+import { logger } from '../../config/logger.js';
 import * as checkoutRepository from '../checkout/checkout.repository.js';
 import * as checkoutGroupService from '../checkout-groups/checkout-group.service.js';
 import * as orderRepository from '../orders/order.repository.js';
 import * as productRepository from '../products/product.repository.js';
+import * as userRepository from '../users/repository.js';
 import { reverse as reverseCoupon } from '../coupons/coupon.service.js';
 import * as notificationService from '../notifications/service.js';
 import {
@@ -67,6 +70,33 @@ const paymentNotification = (
     session,
   );
 
+const sendPurchaseFeedbackEmail = async (buyerId, groupId) => {
+  try {
+    const [buyer, orders] = await Promise.all([
+      userRepository.findById(buyerId),
+      orderRepository.byGroupPublic(buyerId, groupId),
+    ]);
+    if (!buyer?.email) return false;
+    return emailService.sendPurchaseFeedbackEmail({
+      to: buyer.email,
+      buyerName: buyer.fullName,
+      checkoutGroupId: String(groupId),
+      items: orders.flatMap((order) =>
+        (order.items || []).map((item) => ({
+          title: item.title || 'Purchased item',
+          quantity: item.quantity,
+        })),
+      ),
+    });
+  } catch (error) {
+    logger.warn(
+      { error, buyerId: String(buyerId), checkoutGroupId: String(groupId) },
+      'Purchase feedback email dispatch failed',
+    );
+    return false;
+  }
+};
+
 export const createPayPal = async (buyerId, groupId) => {
   const current = await internalPayment(buyerId, groupId);
   if (current.method !== 'PAYPAL')
@@ -126,8 +156,13 @@ export const createPayPal = async (buyerId, groupId) => {
   }
 };
 
-const confirmCapture = (buyerId, groupId, providerOrderId, claimToken) =>
-  checkoutRepository.transaction(async (session) => {
+const confirmCapture = async (
+  buyerId,
+  groupId,
+  providerOrderId,
+  claimToken,
+) => {
+  const result = await checkoutRepository.transaction(async (session) => {
     const captured = await repository.capture(
       buyerId,
       groupId,
@@ -138,7 +173,10 @@ const confirmCapture = (buyerId, groupId, providerOrderId, claimToken) =>
     if (!captured) {
       const latest = await internalPayment(buyerId, groupId, session);
       if (latest.status === 'CAPTURED')
-        return repository.ownedByGroup(buyerId, groupId, session);
+        return {
+          payment: await repository.ownedByGroup(buyerId, groupId, session),
+          shouldEmail: false,
+        };
       throw invalidState('Payment cannot be captured');
     }
     await checkoutGroupService.confirmPayment(buyerId, groupId, session);
@@ -156,8 +194,11 @@ const confirmCapture = (buyerId, groupId, providerOrderId, claimToken) =>
       'Your PayPal payment was captured',
       session,
     );
-    return captured;
+    return { payment: captured, shouldEmail: true };
   });
+  if (result.shouldEmail) await sendPurchaseFeedbackEmail(buyerId, groupId);
+  return result.payment;
+};
 
 const failCapture = (buyerId, groupId, outcome, claimToken) =>
   checkoutRepository.transaction(async (session) => {
@@ -262,13 +303,16 @@ export const capturePayPal = async (buyerId, groupId) => {
   }
 };
 
-export const confirmCod = async (buyerId, groupId) =>
-  checkoutRepository.transaction(async (session) => {
+export const confirmCod = async (buyerId, groupId) => {
+  const result = await checkoutRepository.transaction(async (session) => {
     const current = await internalPayment(buyerId, groupId, session);
     if (current.method !== 'COD')
       throw invalidState('Payment method is not COD');
     if (current.status === 'CONFIRMED')
-      return repository.ownedByGroup(buyerId, groupId, session);
+      return {
+        payment: await repository.ownedByGroup(buyerId, groupId, session),
+        shouldEmail: false,
+      };
     if (current.status !== 'PENDING')
       throw invalidState('COD payment cannot be confirmed');
     const confirmed = await repository.confirmCod(buyerId, groupId, session);
@@ -288,5 +332,8 @@ export const confirmCod = async (buyerId, groupId) =>
       'Your cash-on-delivery order was confirmed',
       session,
     );
-    return confirmed;
+    return { payment: confirmed, shouldEmail: true };
   });
+  if (result.shouldEmail) await sendPurchaseFeedbackEmail(buyerId, groupId);
+  return result.payment;
+};

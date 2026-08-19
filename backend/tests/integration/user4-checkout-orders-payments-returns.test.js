@@ -12,6 +12,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { USER4_NOTIFICATION_EVENTS } from '../../src/common/constants/user4-notification-events.js';
+import { emailService } from '../../src/common/services/email.service.js';
 
 const prefix = '/api/v1';
 const password = 'Strong1!Password';
@@ -274,6 +275,7 @@ beforeEach(async () => {
     ),
   );
   await seed();
+  vi.spyOn(emailService, 'sendPurchaseFeedbackEmail').mockResolvedValue(false);
 });
 afterAll(async () => {
   await database.disconnectDatabase();
@@ -367,8 +369,26 @@ describe('User 4 checkout, payment, orders, and returns', () => {
         }),
       );
     expect(response.body.data.payment.status).toBe('PENDING');
+    const emailSpy = vi
+      .spyOn(emailService, 'sendPurchaseFeedbackEmail')
+      .mockResolvedValue(true);
     await paymentAction(agent, 'cod/confirm', response.body.data._id).expect(
       200,
+    );
+    await paymentAction(agent, 'cod/confirm', response.body.data._id).expect(
+      200,
+    );
+    expect(emailSpy).toHaveBeenCalledOnce();
+    expect(emailSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'buyer@example.test',
+        buyerName: 'Buyer',
+        checkoutGroupId: response.body.data._id,
+        items: expect.arrayContaining([
+          expect.objectContaining({ title: 'One', quantity: 2 }),
+          expect.objectContaining({ title: 'Two', quantity: 1 }),
+        ]),
+      }),
     );
     expect(
       await models.Notification.find({
@@ -594,8 +614,22 @@ describe('User 4 checkout, payment, orders, and returns', () => {
     ).expect(201);
     const id = created.body.data._id;
     await paymentAction(agent, 'paypal/create', id).expect(200);
+    const emailSpy = vi
+      .spyOn(emailService, 'sendPurchaseFeedbackEmail')
+      .mockResolvedValue(true);
     await paymentAction(agent, 'paypal/capture', id).expect(200);
     await paymentAction(agent, 'paypal/capture', id).expect(200);
+    expect(emailSpy).toHaveBeenCalledOnce();
+    expect(emailSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'buyer@example.test',
+        buyerName: 'Buyer',
+        checkoutGroupId: id,
+        items: expect.arrayContaining([
+          expect.objectContaining({ title: 'One', quantity: 1 }),
+        ]),
+      }),
+    );
     expect(
       (await models.Payment.findOne({ checkoutGroupId: id }).lean()).status,
     ).toBe('CAPTURED');

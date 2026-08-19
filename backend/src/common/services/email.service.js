@@ -20,6 +20,14 @@ const maskEmail = (email) => {
   return `${local.slice(0, 1)}***@${domain}`;
 };
 
+const escapeHtml = (value) =>
+  String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+
 export const buildVerificationEmail = ({
   otp,
   expiresInMinutes,
@@ -148,6 +156,95 @@ const sendPasswordResetEmail = async ({
   }
 };
 
+export const buildPurchaseFeedbackEmail = ({
+  buyerName,
+  checkoutGroupId,
+  items = [],
+}) => {
+  const itemLines = items
+    .map((item) => `- ${item.title} x ${item.quantity}`)
+    .join('\n');
+  const greeting = buyerName ? `Hi ${buyerName},` : 'Hi,';
+  const subject = 'Thank you for buying on SBay';
+  const text = [
+    greeting,
+    '',
+    'Thank you for buying on SBay.',
+    'Please leave feedback for the item after you receive it. Your feedback helps sellers and future buyers.',
+    '',
+    `Order group: ${checkoutGroupId}`,
+    itemLines ? `Items:\n${itemLines}` : '',
+    '',
+    'You can review your order from your SBay account.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const htmlItems = items.length
+    ? `<ul>${items
+        .map(
+          (item) =>
+            `<li>${escapeHtml(item.title)} x ${escapeHtml(item.quantity)}</li>`,
+        )
+        .join('')}</ul>`
+    : '';
+  const html = `<p>${escapeHtml(greeting)}</p><p>Thank you for buying on SBay.</p><p>Please leave feedback for the item after you receive it. Your feedback helps sellers and future buyers.</p><p><strong>Order group:</strong> ${escapeHtml(checkoutGroupId)}</p>${htmlItems}<p>You can review your order from your SBay account.</p>`;
+  return { subject, text, html };
+};
+
+const sendPurchaseFeedbackEmail = async ({
+  to,
+  buyerName,
+  checkoutGroupId,
+  items = [],
+}) => {
+  const maskedRecipient = maskEmail(to);
+  if (!transporter) {
+    logger.info(
+      {
+        messageType: 'PURCHASE_FEEDBACK_REMINDER',
+        recipient: maskedRecipient,
+        deliverySuppressed: true,
+      },
+      'SMTP is not configured; purchase feedback email was not sent',
+    );
+    return false;
+  }
+
+  try {
+    const content = buildPurchaseFeedbackEmail({
+      buyerName,
+      checkoutGroupId,
+      items,
+    });
+    const result = await transporter.sendMail({
+      from: env.EMAIL_FROM,
+      to,
+      ...content,
+    });
+    if (Array.isArray(result?.accepted) && !result.accepted.includes(to))
+      return false;
+    logger.info(
+      {
+        messageType: 'PURCHASE_FEEDBACK_REMINDER',
+        recipient: maskedRecipient,
+        deliverySuppressed: false,
+      },
+      'Purchase feedback email delivered',
+    );
+    return true;
+  } catch (error) {
+    logger.warn(
+      {
+        messageType: 'PURCHASE_FEEDBACK_REMINDER',
+        recipient: maskedRecipient,
+        errorCode: error.code,
+      },
+      'Purchase feedback email delivery failed',
+    );
+    return false;
+  }
+};
+
 const sendMessageCopy = async ({
   to,
   listingTitle,
@@ -193,7 +290,11 @@ const sendMessageCopy = async ({
     return true;
   } catch (error) {
     logger.warn(
-      { messageType: 'MESSAGE_COPY', recipient: maskedRecipient, errorCode: error.code },
+      {
+        messageType: 'MESSAGE_COPY',
+        recipient: maskedRecipient,
+        errorCode: error.code,
+      },
       'Message copy email delivery failed',
     );
     return false;
@@ -203,5 +304,6 @@ const sendMessageCopy = async ({
 export const emailService = {
   sendVerificationEmail,
   sendPasswordResetEmail,
+  sendPurchaseFeedbackEmail,
   sendMessageCopy,
 };

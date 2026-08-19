@@ -104,4 +104,24 @@ describe('email service', () => {
       }),
     ).resolves.toBe(false);
   });
+
+  it('builds purchase feedback reminder content with purchased items', async () => {
+    const { buildPurchaseFeedbackEmail } = await importService();
+    const message = buildPurchaseFeedbackEmail({
+      buyerName: 'Buyer One',
+      checkoutGroupId: 'checkout-123',
+      items: [
+        { title: 'Camera Kit', quantity: 2 },
+        { title: 'Desk Lamp', quantity: 1 },
+      ],
+    });
+
+    expect(message.subject).toBe('Thank you for buying on SBay');
+    expect(message.text).toContain('Hi Buyer One');
+    expect(message.text).toContain('Please leave feedback for the item');
+    expect(message.text).toContain('Camera Kit x 2');
+    expect(message.text).toContain('Desk Lamp x 1');
+    expect(message.text).toContain('checkout-123');
+    expect(message.html).toContain('Thank you for buying on SBay');
+  });
 });

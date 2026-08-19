@@ -32,7 +32,13 @@ export const catalogApi = {
 
   reviews: (
     productId: string,
-    params: { page?: number; limit?: number; rating?: number; sort?: string },
+    params: {
+      page?: number;
+      limit?: number;
+      q?: string;
+      rating?: number;
+      sort?: string;
+    },
   ): Promise<{ items: ProductReview[]; meta: PaginationMeta }> =>
     apiGetPaged<ProductReview>(`/products/${productId}/reviews`, clean({ ...params })),
 };

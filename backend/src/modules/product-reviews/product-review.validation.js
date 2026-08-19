@@ -14,9 +14,17 @@ export const listProductReviewsSchema = z
       .object({
         page: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().min(1).max(100).optional(),
+        q: z.string().trim().min(1).max(200).optional(),
         rating: z.coerce.number().int().min(1).max(5).optional(),
         sort: z
-          .enum(['newest', 'oldest', 'rating_desc', 'rating_asc'])
+          .enum([
+            'newest',
+            'oldest',
+            'highest',
+            'lowest',
+            'rating_desc',
+            'rating_asc',
+          ])
           .optional(),
       })
       .strict(),

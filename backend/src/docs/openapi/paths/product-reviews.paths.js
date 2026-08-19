@@ -35,10 +35,23 @@ export const productReviewPaths = {
       parameters: [
         idParam('productId'),
         ...pageParams,
+        query('q', {
+          type: 'string',
+          minLength: 1,
+          maxLength: 200,
+          description: 'Search review comments only.',
+        }),
         query('rating', { type: 'integer', minimum: 1, maximum: 5 }),
         query('sort', {
           type: 'string',
-          enum: ['newest', 'oldest', 'rating_desc', 'rating_asc'],
+          enum: [
+            'newest',
+            'oldest',
+            'highest',
+            'lowest',
+            'rating_desc',
+            'rating_asc',
+          ],
         }),
       ],
       success: response('Product reviews', collection('ProductReview'), true),
@@ -64,6 +77,7 @@ export const productReviewPaths = {
       successStatus: 201,
       errors: [400, 401, 403, 404, 409, 413, 429, 500],
       security: security.unsafe,
+      deprecated: true,
     }),
   },
   '/orders/{orderId}/items/{orderItemId}/product-review': {

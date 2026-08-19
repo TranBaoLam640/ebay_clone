@@ -78,7 +78,8 @@ export default function OrderDetailPage() {
     if (!reviewItem) return;
     try {
       await createReview.mutateAsync({
-        // Reviews address the product by its public uuid.
+        // Used only to invalidate product detail/review caches; the backend
+        // creates through the canonical order-item endpoint below.
         productId: reviewItem.productUuid!,
         orderId: o.id,
         orderItemId: reviewItem.id,
@@ -174,7 +175,7 @@ export default function OrderDetailPage() {
         <h3 className="mb-4 text-sm font-bold text-text">{t('checkout.items')}</h3>
         <ul className="flex flex-col gap-4">
           {o.items.map((it) => {
-            // Render entirely from the order's stored snapshot — no per-item
+            // Render entirely from the order's stored snapshot - no per-item
             // product fetch. Title, image, and price are captured at checkout.
             const title = it.title ?? '';
             const lineTotal =
@@ -201,31 +202,35 @@ export default function OrderDetailPage() {
                       {title || t('checkout.items')}
                     </Link>
                   ) : (
-                    <span className="line-clamp-2 text-sm font-medium text-text">{title || '—'}</span>
+                    <span className="line-clamp-2 text-sm font-medium text-text">{title || '-'}</span>
                   )}
                   <p className="mt-0.5 text-xs text-muted">{t('checkout.qty', { count: it.quantity })}</p>
                   {/* Reviewing is per-item (one review each); returns are per-order.
                       Once reviewed, keep the button but disable it (label flips). */}
-                  {canReviewOrReturn && it.productUuid && (
+                  {canReviewOrReturn && (
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={it.reviewed}
-                        onClick={() => setReviewItem(it)}
-                      >
-                        <Icon variant={it.reviewed ? 'icon-check' : 'icon-star'} size={14} />
-                        {it.reviewed ? t('reviews.reviewed') : t('reviews.writeReview')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        loading={contactSeller.isPending}
-                        onClick={() => contactSeller.mutate(it.productUuid!)}
-                      >
-                        <Icon variant="icon-mail" size={14} />
-                        Contact Seller
-                      </Button>
+                      {it.productReviewAvailable && it.productUuid && (it.canWriteProductReview || it.productReview) && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={Boolean(it.productReview)}
+                          onClick={() => setReviewItem(it)}
+                        >
+                          <Icon variant={it.productReview ? 'icon-check' : 'icon-star'} size={14} />
+                          {it.productReview ? t('reviews.reviewed') : t('reviews.writeReview')}
+                        </Button>
+                      )}
+                      {it.productUuid && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={contactSeller.isPending}
+                          onClick={() => contactSeller.mutate(it.productUuid!)}
+                        >
+                          <Icon variant="icon-mail" size={14} />
+                          Contact Seller
+                        </Button>
+                      )}
                       <OrderItemSellerFeedbackActions
                         orderId={o.id}
                         orderItemId={it.id}
@@ -248,7 +253,7 @@ export default function OrderDetailPage() {
           {o.discount > 0 && (
             <div className="flex justify-between">
               <span className="text-muted">{t('checkout.discount')}</span>
-              <span className="text-success">−{formatVnd(o.discount)}</span>
+              <span className="text-success">-{formatVnd(o.discount)}</span>
             </div>
           )}
           <div className="mt-1 flex items-center justify-between border-t border-border pt-3">

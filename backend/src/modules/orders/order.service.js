@@ -16,6 +16,8 @@ import { toAddressSnapshot } from '../addresses/address.mapper.js';
  * - `productUuid`: the public product id used to link/review/fetch a product.
  * - `reviewed` (per item): whether this line already has a product review (one
  *   per item), so the UI can disable an already-used review button.
+ * - `productReview` / `canWriteProductReview`: exact per-order-item product
+ *   review state, based on Product -> CatalogProduct -> valid ePID.
  * - `sellerFeedbacked` (per item): whether this line already has seller
  *   feedback. `sellerRated` remains as a legacy per-order convenience flag.
  */
@@ -25,22 +27,46 @@ const enrichItems = async (orders) => {
   const productIds = items.map((item) => item.productId);
   const orderItemIds = items.map((item) => item._id);
   const orderIds = orders.map((order) => order._id);
-  const [uuidById, reviewedIds, feedbackedItemIds, feedbackedOrderIds] =
-    await Promise.all([
-      productRepository.resolveUuidsByIds(productIds),
-      reviewRepository.reviewedOrderItemIds(orderItemIds),
-      sellerFeedbackRepository.feedbackedOrderItemIds(orderItemIds),
-      sellerFeedbackRepository.feedbackedOrderIds(orderIds),
-    ]);
+  const [
+    uuidById,
+    reviewByOrderItemId,
+    productReviewAvailabilityById,
+    feedbackedItemIds,
+    feedbackedOrderIds,
+  ] = await Promise.all([
+    productRepository.resolveUuidsByIds(productIds),
+    reviewRepository.reviewsByOrderItemIds(orderItemIds),
+    productRepository.reviewAvailabilityByIds(productIds),
+    sellerFeedbackRepository.feedbackedOrderItemIds(orderItemIds),
+    sellerFeedbackRepository.feedbackedOrderIds(orderIds),
+  ]);
   return orders.map((order) => ({
     ...order,
     sellerRated: feedbackedOrderIds.has(String(order._id)),
-    items: (order.items || []).map((item) => ({
-      ...item,
-      productUuid: uuidById.get(String(item.productId)) ?? null,
-      reviewed: reviewedIds.has(String(item._id)),
-      sellerFeedbacked: feedbackedItemIds.has(String(item._id)),
-    })),
+    items: (order.items || []).map((item) => {
+      const review = reviewByOrderItemId.get(String(item._id)) ?? null;
+      const reviewAvailability = productReviewAvailabilityById.get(
+        String(item.productId),
+      );
+      const productReviewAvailable = Boolean(
+        reviewAvailability?.productReviewAvailable,
+      );
+      return {
+        ...item,
+        productUuid: uuidById.get(String(item.productId)) ?? null,
+        productReviewAvailable,
+        catalogProduct: reviewAvailability?.catalogProduct ?? null,
+        productReview: review,
+        reviewed: Boolean(review),
+        canWriteProductReview:
+          order.orderStatus === 'DELIVERED' &&
+          productReviewAvailable &&
+          !review &&
+          String(reviewAvailability?.sellerUserId ?? '') !==
+            String(order.buyerId),
+        sellerFeedbacked: feedbackedItemIds.has(String(item._id)),
+      };
+    }),
   }));
 };
 
@@ -51,7 +77,7 @@ export const list = async (buyerId, query) => {
     repository.countOwned(buyerId, query),
   ]);
   return {
-    items: await enrichItems(items.map(repository.toPublic)),
+    items: (await enrichItems(items)).map(repository.toPublic),
     meta: paginationMeta(page, limit, total),
   };
 };
@@ -59,8 +85,8 @@ export const list = async (buyerId, query) => {
 export const get = async (buyerId, id) => {
   const order = await repository.findOwnedPublic(buyerId, id);
   if (!order) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Order not found');
-  const [enriched] = await enrichItems([repository.toPublic(order)]);
-  return enriched;
+  const [enriched] = await enrichItems([order]);
+  return repository.toPublic(enriched);
 };
 
 const json = (value) => JSON.parse(JSON.stringify(value));

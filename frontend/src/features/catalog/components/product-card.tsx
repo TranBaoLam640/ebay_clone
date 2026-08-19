@@ -94,7 +94,13 @@ export function ProductCard({ product }: { product: ProductListItem }) {
         <h3 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold text-text transition-colors group-hover:text-primary">
           {product.title}
         </h3>
-        <Rating value={product.averageRating} count={product.reviewCount} size={14} />
+        {product.productReviewAvailable && (
+          <Rating
+            value={product.reviewSummary?.averageRating}
+            count={product.reviewSummary?.reviewCount ?? 0}
+            size={14}
+          />
+        )}
         <div className="mt-auto min-w-0 pt-1">
           {/* Reserve one line for the label on every card (empty for fixed-price)
               so the price baseline stays aligned across auction/non-auction tiles

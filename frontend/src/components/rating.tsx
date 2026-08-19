@@ -3,7 +3,7 @@ import { cn } from '@/utils/cn';
 import { Icon } from './icon';
 
 interface RatingProps {
-  value: number;
+  value: number | null | undefined;
   count?: number;
   size?: number;
   showValue?: boolean;
@@ -14,7 +14,8 @@ interface RatingProps {
  *  cue, kept distinct from the coral CTA color. */
 export function Rating({ value, count, size = 16, showValue = false, className }: RatingProps) {
   const { t } = useTranslation();
-  const rounded = Math.round(value);
+  const safeValue = typeof value === 'number' ? value : 0;
+  const rounded = Math.round(safeValue);
   return (
     <div className={cn('flex items-center gap-1', className)}>
       <div className="flex text-rating" aria-hidden>
@@ -22,14 +23,21 @@ export function Rating({ value, count, size = 16, showValue = false, className }
           <Icon key={i} variant={i < rounded ? 'icon-star-fill' : 'icon-star'} size={size} />
         ))}
       </div>
-      {showValue && <span className="text-sm font-semibold text-text">{value.toFixed(1)}</span>}
+      {showValue && typeof value === 'number' && (
+        <span className="text-sm font-semibold text-text">
+          {value.toFixed(1)}
+        </span>
+      )}
       {typeof count === 'number' && (
         <span className="text-sm text-muted">({count})</span>
       )}
       <span className="sr-only">
         {typeof count === 'number'
-          ? t('common.ratingWithCount', { value: value.toFixed(1), count })
-          : t('common.rating', { value: value.toFixed(1) })}
+          ? t('common.ratingWithCount', {
+              value: safeValue.toFixed(1),
+              count,
+            })
+          : t('common.rating', { value: safeValue.toFixed(1) })}
       </span>
     </div>
   );

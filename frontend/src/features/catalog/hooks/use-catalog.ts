@@ -31,12 +31,19 @@ export function useProduct(id: string | undefined) {
 
 export function useProductReviews(
   productId: string | undefined,
-  params: { page?: number; limit?: number; rating?: number; sort?: string },
+  params: {
+    page?: number;
+    limit?: number;
+    q?: string;
+    rating?: number;
+    sort?: string;
+  },
+  enabled = true,
 ) {
   return useQuery({
     queryKey: ['product-reviews', productId, params],
     queryFn: () => catalogApi.reviews(productId!, params),
-    enabled: !!productId,
+    enabled: !!productId && enabled,
     placeholderData: keepPreviousData,
   });
 }

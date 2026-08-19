@@ -459,11 +459,29 @@ export const schemas = {
         readOnly: true,
         example: true,
       },
+      buyer: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: objectId,
+          displayName: { type: 'string' },
+          avatarUrl: { type: 'string', format: 'uri', nullable: true },
+        },
+      },
       reviewer: {
         type: 'object',
+        deprecated: true,
         properties: {
           fullName: { type: 'string' },
           avatarUrl: { type: 'string', format: 'uri', nullable: true },
+        },
+      },
+      purchasedProduct: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: productUuid,
+          name: { type: 'string' },
         },
       },
       createdAt: timestamp,
@@ -472,8 +490,13 @@ export const schemas = {
   },
   ProductReviewSummary: {
     type: 'object',
-    required: ['averageRating', 'reviewCount', 'ratingHistogram'],
+    required: ['available', 'averageRating', 'reviewCount', 'ratingHistogram'],
     properties: {
+      available: {
+        type: 'boolean',
+        description:
+          'False when Product is not linked to a valid project-local catalog ePID.',
+      },
       averageRating: {
         type: 'number',
         nullable: true,
@@ -496,7 +519,7 @@ export const schemas = {
   },
   ProductRatingSummary: {
     type: 'object',
-    required: ['averageRating', 'reviewCount'],
+    required: ['averageRating', 'reviewCount', 'ratingHistogram'],
     properties: {
       averageRating: {
         type: 'number',
@@ -505,6 +528,17 @@ export const schemas = {
         maximum: 5,
       },
       reviewCount: { type: 'integer', minimum: 0 },
+      ratingHistogram: {
+        type: 'object',
+        required: ['1', '2', '3', '4', '5'],
+        properties: {
+          1: { type: 'integer', minimum: 0 },
+          2: { type: 'integer', minimum: 0 },
+          3: { type: 'integer', minimum: 0 },
+          4: { type: 'integer', minimum: 0 },
+          5: { type: 'integer', minimum: 0 },
+        },
+      },
     },
   },
   CatalogProduct: {
@@ -546,9 +580,15 @@ export const schemas = {
       price: { type: 'integer', minimum: 0 },
       stock: { type: 'integer', minimum: 0 },
       status: { type: 'string', enum: ['ACTIVE', 'OUT_OF_STOCK'] },
-      averageRating: { type: 'number', minimum: 0, maximum: 5 },
+      averageRating: { type: 'number', nullable: true, minimum: 0, maximum: 5 },
       reviewCount: { type: 'integer', minimum: 0 },
-      reviewSummary: { $ref: '#/components/schemas/ProductRatingSummary' },
+      productReviewAvailable: { type: 'boolean' },
+      reviewSummary: {
+        allOf: [{ $ref: '#/components/schemas/ProductRatingSummary' }],
+        nullable: true,
+        description:
+          'Null when Product is not linked to a valid project-local catalog ePID. Catalogued products with zero reviews return averageRating null, reviewCount 0, and a zero histogram.',
+      },
       catalogProduct: {
         allOf: [{ $ref: '#/components/schemas/CatalogProduct' }],
         nullable: true,
@@ -586,9 +626,15 @@ export const schemas = {
         type: 'array',
         items: { $ref: '#/components/schemas/ProductAttribute' },
       },
-      averageRating: { type: 'number', minimum: 0, maximum: 5 },
+      averageRating: { type: 'number', nullable: true, minimum: 0, maximum: 5 },
       reviewCount: { type: 'integer', minimum: 0 },
-      reviewSummary: { $ref: '#/components/schemas/ProductRatingSummary' },
+      productReviewAvailable: { type: 'boolean' },
+      reviewSummary: {
+        allOf: [{ $ref: '#/components/schemas/ProductRatingSummary' }],
+        nullable: true,
+        description:
+          'Null when Product is not linked to a valid project-local catalog ePID. Catalogued products with zero reviews return averageRating null, reviewCount 0, and a zero histogram.',
+      },
       catalogProduct: {
         allOf: [{ $ref: '#/components/schemas/CatalogProduct' }],
         nullable: true,
@@ -1049,6 +1095,30 @@ export const schemas = {
       offerId: objectId,
       originalPrice: { type: 'integer', minimum: 0 },
       finalPrice: { type: 'integer', minimum: 0 },
+      productReviewAvailable: { type: 'boolean' },
+      canWriteProductReview: { type: 'boolean' },
+      productReview: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: objectId,
+          rating,
+          comment: { type: 'string', nullable: true },
+          createdAt: timestamp,
+        },
+      },
+      catalogProduct: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: objectId,
+          ePID: {
+            type: 'string',
+            description: 'Project-local catalog identity.',
+          },
+          name: { type: 'string' },
+        },
+      },
     },
   },
   Order: {

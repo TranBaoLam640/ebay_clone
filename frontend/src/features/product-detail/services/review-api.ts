@@ -11,14 +11,16 @@ export interface CreateReviewInput {
 }
 
 export const reviewApi = {
-  /** Create a review for a product the user has received. */
-  create: ({ productId, orderId, orderItemId, rating, comment }: CreateReviewInput) =>
-    apiMutate<ProductReview>('post', `/products/${productId}/reviews`, {
-      orderId,
-      orderItemId,
+  /** Create a review for an exact delivered order item. */
+  create: ({ orderId, orderItemId, rating, comment }: CreateReviewInput) =>
+    apiMutate<ProductReview>(
+      'post',
+      `/orders/${orderId}/items/${orderItemId}/product-review`,
+      {
       rating,
       ...(comment ? { comment } : {}),
-    }),
+      },
+    ),
 
   /** Update an existing review the user owns. */
   update: (reviewId: string, data: { rating?: number; comment?: string }) =>

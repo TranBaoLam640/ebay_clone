@@ -3,6 +3,7 @@ import { Order } from './order.model.js';
 
 const publicProjection = {
   _id: 1,
+  buyerId: 1,
   sellerId: 1,
   checkoutGroupId: 1,
   orderStatus: 1,
@@ -49,6 +50,23 @@ const toItemPublic = (item) => ({
     originalPrice: item.originalPrice,
   }),
   ...(item.finalPrice !== undefined && { finalPrice: item.finalPrice }),
+  ...(item.productUuid !== undefined && { productUuid: item.productUuid }),
+  ...(item.productReviewAvailable !== undefined && {
+    productReviewAvailable: item.productReviewAvailable,
+  }),
+  ...(item.catalogProduct !== undefined && {
+    catalogProduct: item.catalogProduct,
+  }),
+  ...(item.productReview !== undefined && {
+    productReview: item.productReview,
+  }),
+  ...(item.canWriteProductReview !== undefined && {
+    canWriteProductReview: item.canWriteProductReview,
+  }),
+  ...(item.reviewed !== undefined && { reviewed: item.reviewed }),
+  ...(item.sellerFeedbacked !== undefined && {
+    sellerFeedbacked: item.sellerFeedbacked,
+  }),
 });
 
 export const toPublic = (order) => {

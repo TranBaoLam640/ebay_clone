@@ -137,12 +137,14 @@ export default function ProductDetailPage() {
               <h1 className="text-2xl font-extrabold text-text">
                 {product.title}
               </h1>
-              <Rating
-                value={product.averageRating}
-                count={product.reviewCount}
-                showValue
-                size={18}
-              />
+              {product.productReviewAvailable && (
+                <Rating
+                  value={product.reviewSummary?.averageRating}
+                  count={product.reviewSummary?.reviewCount ?? 0}
+                  showValue
+                  size={18}
+                />
+              )}
               <p className="text-sm leading-relaxed text-muted">
                 {product.description}
               </p>
@@ -170,12 +172,14 @@ export default function ProductDetailPage() {
                 </h1>
               </div>
 
-              <Rating
-                value={product.averageRating}
-                count={product.reviewCount}
-                showValue
-                size={18}
-              />
+              {product.productReviewAvailable && (
+                <Rating
+                  value={product.reviewSummary?.averageRating}
+                  count={product.reviewSummary?.reviewCount ?? 0}
+                  showValue
+                  size={18}
+                />
+              )}
 
               <Price cents={product.price} className="text-3xl" />
 
@@ -285,7 +289,7 @@ export default function ProductDetailPage() {
       </div>
 
       <div className="mt-12">
-        <ReviewList productId={product.id} />
+        <ReviewList product={product} />
       </div>
     </div>
   );

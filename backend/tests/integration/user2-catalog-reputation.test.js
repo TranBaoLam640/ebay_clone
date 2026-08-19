@@ -149,6 +149,13 @@ const seed = async () => {
     inactiveSellerProductUuid: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
     inactiveCategoryProduct: objectId(),
     inactiveCategoryProductUuid: '11111111-1111-4111-8111-111111111111',
+    uncataloguedProduct: objectId(),
+    uncataloguedProductUuid: '22222222-2222-4222-8222-222222222222',
+    missingCatalogProductRef: objectId(),
+    missingCatalogProductRefUuid: '33333333-3333-4333-8333-333333333333',
+    emptyEpidCatalogProduct: objectId(),
+    emptyEpidProduct: objectId(),
+    emptyEpidProductUuid: '44444444-4444-4444-8444-444444444444',
     catalogProduct: objectId(),
     outOfStockCatalogProduct: objectId(),
     draftCatalogProduct: objectId(),
@@ -282,6 +289,14 @@ const seed = async () => {
       categoryId: ids.inactiveCategory,
     },
   ]);
+  await models.CatalogProduct.collection.insertOne({
+    _id: ids.emptyEpidCatalogProduct,
+    ePID: '',
+    name: 'Invalid Empty ePID',
+    categoryId: ids.category,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
   await models.Product.create([
     {
       _id: ids.product,
@@ -396,6 +411,41 @@ const seed = async () => {
       stock: 1,
       status: 'ACTIVE',
     },
+    {
+      _id: ids.uncataloguedProduct,
+      uuid: ids.uncataloguedProductUuid,
+      sellerId: ids.seller,
+      categoryId: ids.category,
+      title: 'Uncatalogued Laptop',
+      description: 'Visible but not catalog-backed',
+      price: 120,
+      stock: 1,
+      status: 'ACTIVE',
+    },
+    {
+      _id: ids.missingCatalogProductRef,
+      uuid: ids.missingCatalogProductRefUuid,
+      sellerId: ids.seller,
+      categoryId: ids.category,
+      catalogProductId: new mongoose.Types.ObjectId(),
+      title: 'Missing Catalog Laptop',
+      description: 'Visible but points to a missing catalog product',
+      price: 130,
+      stock: 1,
+      status: 'ACTIVE',
+    },
+    {
+      _id: ids.emptyEpidProduct,
+      uuid: ids.emptyEpidProductUuid,
+      sellerId: ids.seller,
+      categoryId: ids.category,
+      catalogProductId: ids.emptyEpidCatalogProduct,
+      title: 'Empty ePID Laptop',
+      description: 'Visible but points to invalid catalog identity',
+      price: 140,
+      stock: 1,
+      status: 'ACTIVE',
+    },
   ]);
   await models.Order.create([
     {
@@ -495,10 +545,10 @@ describe('User 2 catalog and reputation', () => {
     expect(list.body.data.map((item) => item.id)).toEqual(
       expect.arrayContaining([ids.productUuid, ids.outOfStockProductUuid]),
     );
-    expect(list.body.data).toHaveLength(2);
+    expect(list.body.data).toHaveLength(5);
 
     const search = await request(app)
-      .get(`${prefix}/products?search=Laptop`)
+      .get(`${prefix}/products?search=Precision`)
       .expect(200);
     expect(search.body.data.map((item) => item.id)).toEqual([ids.productUuid]);
 
@@ -552,7 +602,7 @@ describe('User 2 catalog and reputation', () => {
     expect(defaultList.body.meta).toEqual({
       page: 1,
       limit: 20,
-      totalItems: 2,
+      totalItems: 5,
       totalPages: 1,
     });
     const custom = await request(app)
@@ -561,8 +611,8 @@ describe('User 2 catalog and reputation', () => {
     expect(custom.body.meta).toEqual({
       page: 2,
       limit: 1,
-      totalItems: 2,
-      totalPages: 2,
+      totalItems: 5,
+      totalPages: 5,
     });
     await request(app).get(`${prefix}/products?limit=101`).expect(400);
     await request(app)
@@ -582,9 +632,21 @@ describe('User 2 catalog and reputation', () => {
         },
       },
     );
+    await models.Product.collection.updateMany(
+      {
+        _id: {
+          $in: [
+            ids.uncataloguedProduct,
+            ids.missingCatalogProductRef,
+            ids.emptyEpidProduct,
+          ],
+        },
+      },
+      { $set: { createdAt: new Date('2025-12-01T00:00:00.000Z') } },
+    );
     const expectedFirst = {
       newest: ids.outOfStockProductUuid,
-      price_asc: ids.outOfStockProductUuid,
+      price_asc: ids.uncataloguedProductUuid,
       price_desc: ids.productUuid,
       rating_desc: ids.outOfStockProductUuid,
     };
@@ -600,7 +662,7 @@ describe('User 2 catalog and reputation', () => {
           `${prefix}/products?categoryId=${ids.categoryUuid}`,
         )
       ).body.data,
-    ).toHaveLength(2);
+    ).toHaveLength(5);
     expect(
       (
         await request(app).get(
@@ -617,7 +679,7 @@ describe('User 2 catalog and reputation', () => {
     );
     expect(
       (await request(app).get(`${prefix}/products?inStock=true`)).body.data,
-    ).toHaveLength(1);
+    ).toHaveLength(4);
     const idsInList = defaultList.body.data.map((item) => item.id);
     expect(idsInList).not.toEqual(
       expect.arrayContaining([
@@ -666,9 +728,11 @@ describe('User 2 catalog and reputation', () => {
         name: 'Precision Laptop',
       }),
     );
+    expect(detail.body.data.productReviewAvailable).toBe(true);
     expect(detail.body.data.reviewSummary).toEqual({
       averageRating: null,
       reviewCount: 0,
+      ratingHistogram: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     });
     expect(detail.body.data.attributes).toEqual(
       expect.arrayContaining([
@@ -696,6 +760,49 @@ describe('User 2 catalog and reputation', () => {
       .get(`${prefix}/products/${ids.inactiveCategoryProductUuid}`)
       .expect(404);
     await request(app).get(`${prefix}/products/not-an-id`).expect(400);
+  });
+
+  it('hides product review summary for uncatalogued or invalid catalog products', async () => {
+    for (const productUuid of [
+      ids.uncataloguedProductUuid,
+      ids.missingCatalogProductRefUuid,
+      ids.emptyEpidProductUuid,
+    ]) {
+      await request(app)
+        .get(`${prefix}/products/${productUuid}`)
+        .expect(200)
+        .then(({ body }) => {
+          expect(body.data.productReviewAvailable).toBe(false);
+          expect(body.data.catalogProduct).toBeNull();
+          expect(body.data.reviewSummary).toBeNull();
+          expect(body.data.averageRating).toBeNull();
+          expect(body.data.reviewCount).toBe(0);
+        });
+      await request(app)
+        .get(`${prefix}/products/${productUuid}/review-summary`)
+        .expect(200)
+        .then(({ body }) =>
+          expect(body.data).toEqual({
+            available: false,
+            averageRating: null,
+            reviewCount: 0,
+            ratingHistogram: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          }),
+        );
+      await request(app)
+        .get(`${prefix}/products/${productUuid}/reviews`)
+        .expect(200)
+        .then(({ body }) => {
+          expect(body.data).toEqual([]);
+          expect(body.meta).toEqual({
+            page: 1,
+            limit: 20,
+            totalItems: 0,
+            totalPages: 0,
+            available: false,
+          });
+        });
+    }
   });
 
   it('lists catalog products, filters by ePID, and enforces unique ePID', async () => {
@@ -785,6 +892,7 @@ describe('User 2 catalog and reputation', () => {
           limit: 1,
           totalItems: 1,
           totalPages: 1,
+          available: true,
         });
       });
     expect(
@@ -807,6 +915,72 @@ describe('User 2 catalog and reputation', () => {
         )
       ).status,
     ).toBe(403);
+  });
+
+  it('searches review comments and sorts product reviews by newest, highest, and lowest', async () => {
+    await models.ProductReview.create([
+      {
+        productId: ids.product,
+        catalogProductId: ids.catalogProduct,
+        ePID: 'SBAY-EPID-TEST-0001',
+        buyerId: ids.buyer,
+        orderId: ids.order,
+        orderItemId: new mongoose.Types.ObjectId(),
+        rating: 2,
+        comment: 'Battery was acceptable',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+      {
+        productId: ids.product,
+        catalogProductId: ids.catalogProduct,
+        ePID: 'SBAY-EPID-TEST-0001',
+        buyerId: ids.otherBuyer,
+        orderId: ids.order,
+        orderItemId: new mongoose.Types.ObjectId(),
+        rating: 5,
+        comment: 'Excellent screen quality',
+        createdAt: new Date('2026-01-03T00:00:00.000Z'),
+      },
+      {
+        productId: ids.product,
+        catalogProductId: ids.catalogProduct,
+        ePID: 'SBAY-EPID-TEST-0001',
+        buyerId: ids.buyer,
+        orderId: ids.order,
+        orderItemId: new mongoose.Types.ObjectId(),
+        rating: 3,
+        comment: 'Keyboard feels fine',
+        createdAt: new Date('2026-01-02T00:00:00.000Z'),
+      },
+    ]);
+
+    await request(app)
+      .get(`${prefix}/products/${ids.productUuid}/reviews?q=screen`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.meta.available).toBe(true);
+        expect(body.data.map((review) => review.comment)).toEqual([
+          'Excellent screen quality',
+        ]);
+      });
+    await request(app)
+      .get(`${prefix}/products/${ids.productUuid}/reviews?sort=newest`)
+      .expect(200)
+      .then(({ body }) =>
+        expect(body.data.map((review) => review.rating)).toEqual([5, 3, 2]),
+      );
+    await request(app)
+      .get(`${prefix}/products/${ids.productUuid}/reviews?sort=highest`)
+      .expect(200)
+      .then(({ body }) =>
+        expect(body.data.map((review) => review.rating)).toEqual([5, 3, 2]),
+      );
+    await request(app)
+      .get(`${prefix}/products/${ids.productUuid}/reviews?sort=lowest`)
+      .expect(200)
+      .then(({ body }) =>
+        expect(body.data.map((review) => review.rating)).toEqual([2, 3, 5]),
+      );
   });
 
   it('creates canonical order-item product reviews from server-derived transaction and catalog identity', async () => {
@@ -834,6 +1008,23 @@ describe('User 2 catalog and reputation', () => {
       },
     );
     expect(review.status).toBe(400);
+
+    await buyer
+      .get(`${prefix}/orders/${ids.order}`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data).not.toHaveProperty('buyerId');
+        expect(body.data.items[0]).toEqual(
+          expect.objectContaining({
+            productReviewAvailable: true,
+            canWriteProductReview: true,
+            productReview: null,
+            catalogProduct: expect.objectContaining({
+              ePID: 'SBAY-EPID-TEST-0001',
+            }),
+          }),
+        );
+      });
 
     const created = await mutate(
       buyer,
@@ -865,6 +1056,56 @@ describe('User 2 catalog and reputation', () => {
         ePID: 'SBAY-EPID-TEST-0001',
       }),
     );
+    await buyer
+      .get(`${prefix}/orders/${ids.order}`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data).not.toHaveProperty('buyerId');
+        expect(body.data.items[0]).toEqual(
+          expect.objectContaining({
+            productReviewAvailable: true,
+            canWriteProductReview: false,
+            reviewed: true,
+            productReview: expect.objectContaining({
+              id: created.body.data.id,
+              rating: 5,
+              comment: 'Excellent product',
+            }),
+          }),
+        );
+      });
+  });
+
+  it('rejects product review creation when product lacks a valid catalog ePID', async () => {
+    const buyer = await login('buyer@example.test');
+    for (const productId of [
+      ids.uncataloguedProduct,
+      ids.missingCatalogProductRef,
+      ids.emptyEpidProduct,
+    ]) {
+      const { orderId, orderItemId } = await createDeliveredOrderItem({
+        productId,
+      });
+      await mutate(
+        buyer,
+        'post',
+        `/orders/${orderId}/items/${orderItemId}/product-review`,
+        { rating: 5 },
+      ).then(({ status, body }) => {
+        expect(status).toBe(409);
+        expect(body.error.code).toBe('CONFLICT');
+      });
+    }
+
+    const { orderId, orderItemId } = await createDeliveredOrderItem({
+      productId: ids.uncataloguedProduct,
+    });
+    await mutate(
+      buyer,
+      'post',
+      `/products/${ids.uncataloguedProductUuid}/reviews`,
+      reviewInput(orderId, orderItemId),
+    ).then(({ status }) => expect(status).toBe(409));
   });
 
   it('validates product review rating, rejects self review, and enforces one review per order item', async () => {
@@ -949,10 +1190,10 @@ describe('User 2 catalog and reputation', () => {
     const sellerUser2 = new mongoose.Types.ObjectId();
     const seller2 = new mongoose.Types.ObjectId();
     const listingB = new mongoose.Types.ObjectId();
-    const listingBUuid = '22222222-2222-4222-8222-222222222222';
+    const listingBUuid = '77777777-7777-4777-8777-777777777777';
     const catalogY = new mongoose.Types.ObjectId();
     const listingC = new mongoose.Types.ObjectId();
-    const listingCUuid = '33333333-3333-4333-8333-333333333333';
+    const listingCUuid = '88888888-8888-4888-8888-888888888888';
     const orderB = new mongoose.Types.ObjectId();
     const itemB = new mongoose.Types.ObjectId();
     const orderC = new mongoose.Types.ObjectId();
@@ -1060,6 +1301,7 @@ describe('User 2 catalog and reputation', () => {
         .expect(200)
         .then(({ body }) =>
           expect(body.data).toEqual({
+            available: true,
             averageRating: 4,
             reviewCount: 2,
             ratingHistogram: { 1: 0, 2: 0, 3: 1, 4: 0, 5: 1 },
@@ -1081,6 +1323,7 @@ describe('User 2 catalog and reputation', () => {
           expect(body.data.reviewSummary).toEqual({
             averageRating: 4,
             reviewCount: 2,
+            ratingHistogram: { 1: 0, 2: 0, 3: 1, 4: 0, 5: 1 },
           });
           expect(body.data.averageRating).toBe(4);
           expect(body.data.reviewCount).toBe(2);
@@ -1092,6 +1335,7 @@ describe('User 2 catalog and reputation', () => {
       .expect(200)
       .then(({ body }) =>
         expect(body.data).toEqual({
+          available: true,
           averageRating: 2,
           reviewCount: 1,
           ratingHistogram: { 1: 0, 2: 1, 3: 0, 4: 0, 5: 0 },

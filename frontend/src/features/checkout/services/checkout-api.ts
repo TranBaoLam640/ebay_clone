@@ -1,5 +1,6 @@
 import { apiGet, apiMutate } from '@/services/api-client';
 import type { ServerCartItem } from '@/features/cart/services/cart-api';
+import type { CatalogProductSummary } from '@/features/catalog/types/catalog.types';
 
 export type PaymentMethod = 'COD' | 'PAYPAL';
 
@@ -115,6 +116,15 @@ export interface OrderItem {
   productUuid: string | null;
   /** Whether this line already has a product review (one review per item). */
   reviewed: boolean;
+  productReviewAvailable: boolean;
+  canWriteProductReview: boolean;
+  catalogProduct: Pick<CatalogProductSummary, 'id' | 'ePID' | 'name'> | null;
+  productReview: {
+    id: string;
+    rating: number;
+    comment: string | null;
+    createdAt: string;
+  } | null;
   /** Whether this line already has SellerFeedback; UI fetches detail to handle automated replacement. */
   sellerFeedbacked: boolean;
   quantity: number;
@@ -160,6 +170,15 @@ function normalizeOrder<T extends OrderSummary>(raw: Record<string, unknown>): T
       id: (it._id ?? it.id) as string,
       productId: it.productId as string,
       productUuid: (it.productUuid ?? null) as string | null,
+      productReviewAvailable: Boolean(it.productReviewAvailable),
+      canWriteProductReview: Boolean(it.canWriteProductReview),
+      catalogProduct:
+        (it.catalogProduct as Pick<
+          CatalogProductSummary,
+          'id' | 'ePID' | 'name'
+        > | null | undefined) ?? null,
+      productReview:
+        (it.productReview as OrderItem['productReview'] | undefined) ?? null,
       reviewed: Boolean(it.reviewed),
       sellerFeedbacked: Boolean(it.sellerFeedbacked),
       quantity: it.quantity as number,

@@ -10,10 +10,18 @@ import { pagination, paginationMeta } from '../../common/utils/pagination.js';
 const notFound = (message) => new AppError(404, ERROR_CODES.NOT_FOUND, message);
 
 const emptySummary = {
+  available: false,
   averageRating: null,
   reviewCount: 0,
   ratingHistogram: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
 };
+
+const isValidEPID = (value) => typeof value === 'string' && value.trim() !== '';
+
+const availableSummary = (summary) => ({
+  available: true,
+  ...summary,
+});
 
 const persistAggregate = async (catalogProductId, session) => {
   const aggregate = await repository.aggregateByCatalogProduct(
@@ -59,7 +67,23 @@ const resolveCatalogProduct = async (product) => {
       ERROR_CODES.CONFLICT,
       'Product catalog identity is invalid',
     );
+  if (!isValidEPID(catalogProduct.ePID))
+    throw new AppError(
+      409,
+      ERROR_CODES.CONFLICT,
+      'Product catalog identity is invalid',
+    );
   return catalogProduct;
+};
+
+const findReadableCatalogProduct = async (product) => {
+  if (!product.catalogProductId) return null;
+  const catalogProduct = await catalogProductRepository.findById(
+    product.catalogProductId,
+  );
+  return catalogProduct && isValidEPID(catalogProduct.ePID)
+    ? catalogProduct
+    : null;
 };
 
 const assertNotSelfReview = async (buyerId, product) => {
@@ -88,9 +112,16 @@ const createResolved = async ({ buyerId, orderId, orderItemId, productId }) => {
 
 export const list = async (productUuid, query) => {
   const product = await resolveProductId(productUuid);
-  const catalogProduct = await resolveCatalogProduct(product);
+  const catalogProduct = await findReadableCatalogProduct(product);
   const { page, limit } = pagination(query);
+  if (!catalogProduct)
+    return {
+      items: [],
+      available: false,
+      meta: paginationMeta(page, limit, 0),
+    };
   const result = await repository.list(catalogProduct._id, {
+    q: query.q,
     rating: query.rating,
     sort: query.sort,
     skip: (page - 1) * limit,
@@ -98,14 +129,18 @@ export const list = async (productUuid, query) => {
   });
   return {
     items: result.items,
+    available: true,
     meta: paginationMeta(page, limit, result.total),
   };
 };
 
 export const summary = async (productUuid) => {
   const product = await resolveProductId(productUuid);
-  if (!product.catalogProductId) return emptySummary;
-  return repository.aggregateByCatalogProduct(product.catalogProductId);
+  const catalogProduct = await findReadableCatalogProduct(product);
+  if (!catalogProduct) return emptySummary;
+  return availableSummary(
+    await repository.aggregateByCatalogProduct(catalogProduct._id),
+  );
 };
 
 export const createForOrderItem = async (

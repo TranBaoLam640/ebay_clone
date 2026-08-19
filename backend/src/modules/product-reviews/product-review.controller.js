@@ -7,7 +7,10 @@ export const list = async (req, res, next) => {
       req.params.productId,
       req.validated.query,
     );
-    success(res, result.items, 200, result.meta);
+    success(res, result.items, 200, {
+      ...result.meta,
+      available: result.available,
+    });
   } catch (error) {
     next(error);
   }

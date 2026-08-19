@@ -8,11 +8,15 @@ export function useReviewMutations() {
   const invalidate = (productId: string) => {
     qc.invalidateQueries({ queryKey: ['product-reviews', productId] });
     qc.invalidateQueries({ queryKey: ['product', productId] });
+    qc.invalidateQueries({ queryKey: ['orders'] });
   };
 
   const create = useMutation({
     mutationFn: (input: CreateReviewInput) => reviewApi.create(input),
-    onSuccess: (_data, input) => invalidate(input.productId),
+    onSuccess: (_data, input) => {
+      invalidate(input.productId);
+      qc.invalidateQueries({ queryKey: ['order', input.orderId] });
+    },
   });
 
   return { create };

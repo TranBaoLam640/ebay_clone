@@ -158,8 +158,42 @@ describe('Swagger documentation', () => {
         offerId: expect.objectContaining({ pattern: '^[a-fA-F0-9]{24}$' }),
         originalPrice: expect.objectContaining({ type: 'integer' }),
         finalPrice: expect.objectContaining({ type: 'integer' }),
+        productReviewAvailable: expect.objectContaining({ type: 'boolean' }),
+        canWriteProductReview: expect.objectContaining({ type: 'boolean' }),
+        productReview: expect.objectContaining({ nullable: true }),
+        catalogProduct: expect.objectContaining({ nullable: true }),
       }),
     );
+    expect(
+      document.components.schemas.ProductReviewSummary.properties.available,
+    ).toEqual(expect.objectContaining({ type: 'boolean' }));
+    expect(
+      document.components.schemas.ProductListItem.properties
+        .productReviewAvailable,
+    ).toEqual(expect.objectContaining({ type: 'boolean' }));
+    const reviewParameters = operation(
+      document,
+      'get',
+      '/api/v1/products/{productId}/reviews',
+    ).parameters;
+    expect(reviewParameters[0]).toEqual({
+      $ref: '#/components/parameters/ProductId',
+    });
+    expect(reviewParameters.slice(1, 3)).toEqual([
+      { $ref: '#/components/parameters/Page' },
+      { $ref: '#/components/parameters/Limit' },
+    ]);
+    expect(
+      reviewParameters.slice(3).map((parameter) => parameter.name),
+    ).toEqual(['q', 'rating', 'sort']);
+    expect(reviewParameters[5].schema.enum).toEqual([
+      'newest',
+      'oldest',
+      'highest',
+      'lowest',
+      'rating_desc',
+      'rating_asc',
+    ]);
     expect(document.components.schemas.CartItem.properties.product.$ref).toBe(
       '#/components/schemas/CartProduct',
     );

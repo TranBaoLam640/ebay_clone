@@ -131,6 +131,14 @@ function Slide({ product, gradient }: { product: ProductListItem; gradient: stri
   const { t } = useTranslation();
   const image = product.primaryImage;
   const hasImage = Boolean(image);
+  const reviewSummary = product.reviewSummary;
+  const ratingValue =
+    product.productReviewAvailable &&
+    reviewSummary &&
+    reviewSummary.reviewCount > 0 &&
+    reviewSummary.averageRating !== null
+      ? reviewSummary.averageRating
+      : null;
   return (
     <div className="w-full shrink-0">
       <div className={cn('relative min-h-[440px] md:min-h-[560px]', !hasImage && 'bg-gradient-to-br', gradient)}>
@@ -167,10 +175,10 @@ function Slide({ product, gradient }: { product: ProductListItem; gradient: stri
             </h2>
             <div className="flex items-center gap-4">
               <Price cents={product.price} className="text-3xl font-bold text-white md:text-4xl" />
-              {product.reviewCount > 0 && (
+              {ratingValue !== null && (
                 <span className="flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-sm text-white backdrop-blur-sm">
                   <Icon variant="icon-star-fill" size={14} className="text-rating" />
-                  {product.averageRating.toFixed(1)}
+                  {ratingValue.toFixed(1)}
                 </span>
               )}
             </div>

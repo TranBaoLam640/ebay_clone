@@ -83,11 +83,11 @@ const summaryProjection = {
   offersEnabled: { $ifNull: ['$offersEnabled', false] },
   averageRating: 1,
   reviewCount: 1,
-  reviewSummary: {
-    averageRating: { $ifNull: ['$reviewSummary.averageRating', null] },
-    reviewCount: { $ifNull: ['$reviewSummary.reviewCount', 0] },
+  productReviewAvailable: 1,
+  reviewSummary: 1,
+  catalogProduct: {
+    $cond: ['$productReviewAvailable', '$catalogProduct', null],
   },
-  catalogProduct: { $ifNull: ['$catalogProduct', null] },
   seller: 1,
   category: 1,
 };
@@ -104,6 +104,11 @@ const reviewSummaryLookup = [
             _id: null,
             averageRating: { $avg: '$rating' },
             reviewCount: { $sum: 1 },
+            oneStar: { $sum: { $cond: [{ $eq: ['$rating', 1] }, 1, 0] } },
+            twoStar: { $sum: { $cond: [{ $eq: ['$rating', 2] }, 1, 0] } },
+            threeStar: { $sum: { $cond: [{ $eq: ['$rating', 3] }, 1, 0] } },
+            fourStar: { $sum: { $cond: [{ $eq: ['$rating', 4] }, 1, 0] } },
+            fiveStar: { $sum: { $cond: [{ $eq: ['$rating', 5] }, 1, 0] } },
           },
         },
         {
@@ -111,6 +116,13 @@ const reviewSummaryLookup = [
             _id: 0,
             averageRating: { $round: ['$averageRating', 2] },
             reviewCount: 1,
+            ratingHistogram: {
+              1: '$oneStar',
+              2: '$twoStar',
+              3: '$threeStar',
+              4: '$fourStar',
+              5: '$fiveStar',
+            },
           },
         },
       ],
@@ -120,11 +132,40 @@ const reviewSummaryLookup = [
   {
     $set: {
       reviewSummary: { $arrayElemAt: ['$reviewSummary', 0] },
+      productReviewAvailable: {
+        $gt: [{ $strLenCP: { $ifNull: ['$catalogProduct.ePID', ''] } }, 0],
+      },
       averageRating: {
         $ifNull: [{ $arrayElemAt: ['$reviewSummary.averageRating', 0] }, 0],
       },
       reviewCount: {
         $ifNull: [{ $arrayElemAt: ['$reviewSummary.reviewCount', 0] }, 0],
+      },
+    },
+  },
+  {
+    $set: {
+      reviewSummary: {
+        $cond: [
+          '$productReviewAvailable',
+          {
+            averageRating: { $ifNull: ['$reviewSummary.averageRating', null] },
+            reviewCount: { $ifNull: ['$reviewSummary.reviewCount', 0] },
+            ratingHistogram: {
+              $ifNull: [
+                '$reviewSummary.ratingHistogram',
+                { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+              ],
+            },
+          },
+          null,
+        ],
+      },
+      averageRating: {
+        $cond: ['$productReviewAvailable', '$averageRating', null],
+      },
+      reviewCount: {
+        $cond: ['$productReviewAvailable', '$reviewCount', 0],
       },
     },
   },
@@ -316,6 +357,59 @@ export const resolveUuidsByIds = async (ids) => {
   return new Map(docs.map((doc) => [String(doc._id), doc.uuid]));
 };
 
+export const reviewAvailabilityByIds = async (ids) => {
+  const docs = await Product.aggregate([
+    { $match: { _id: { $in: ids.map(id) } } },
+    {
+      $lookup: {
+        from: 'catalogproducts',
+        localField: 'catalogProductId',
+        foreignField: '_id',
+        pipeline: [{ $project: { _id: 1, ePID: 1, name: 1 } }],
+        as: 'catalogProduct',
+      },
+    },
+    { $unwind: { path: '$catalogProduct', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'sellerprofiles',
+        localField: 'sellerId',
+        foreignField: '_id',
+        pipeline: [{ $project: { _id: 1, userId: 1 } }],
+        as: 'seller',
+      },
+    },
+    { $unwind: { path: '$seller', preserveNullAndEmptyArrays: true } },
+    {
+      $project: {
+        _id: 1,
+        uuid: 1,
+        sellerUserId: '$seller.userId',
+        productReviewAvailable: {
+          $gt: [{ $strLenCP: { $ifNull: ['$catalogProduct.ePID', ''] } }, 0],
+        },
+        catalogProduct: {
+          $cond: [
+            {
+              $gt: [
+                { $strLenCP: { $ifNull: ['$catalogProduct.ePID', ''] } },
+                0,
+              ],
+            },
+            {
+              id: '$catalogProduct._id',
+              ePID: '$catalogProduct.ePID',
+              name: '$catalogProduct.name',
+            },
+            null,
+          ],
+        },
+      },
+    },
+  ]);
+  return new Map(docs.map((doc) => [String(doc._id), doc]));
+};
+
 // Live auction fields projected onto availability/detail payloads. Never
 // exposes the hidden leader max, leader id, or the reserve amount — only the
 // derived `reserveMet` boolean and whether Buy It Now is still available.
@@ -452,11 +546,11 @@ export const findVisibleById = async (productUuid) => {
         },
         averageRating: 1,
         reviewCount: 1,
-        reviewSummary: {
-          averageRating: { $ifNull: ['$reviewSummary.averageRating', null] },
-          reviewCount: { $ifNull: ['$reviewSummary.reviewCount', 0] },
+        productReviewAvailable: 1,
+        reviewSummary: 1,
+        catalogProduct: {
+          $cond: ['$productReviewAvailable', '$catalogProduct', null],
         },
-        catalogProduct: { $ifNull: ['$catalogProduct', null] },
         seller: 1,
         category: 1,
         offersEnabled: { $ifNull: ['$offersEnabled', false] },

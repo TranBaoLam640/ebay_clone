@@ -10,9 +10,18 @@ const publicProjection = {
   catalogProductId: 1,
   ePID: 1,
   verifiedPurchase: { $literal: true },
+  buyer: {
+    id: '$buyer._id',
+    displayName: '$buyer.fullName',
+    avatarUrl: '$buyer.avatarUrl',
+  },
   reviewer: {
-    fullName: '$reviewer.fullName',
-    avatarUrl: '$reviewer.avatarUrl',
+    fullName: '$buyer.fullName',
+    avatarUrl: '$buyer.avatarUrl',
+  },
+  purchasedProduct: {
+    id: '$purchasedProduct.uuid',
+    name: '$purchasedProduct.title',
   },
   createdAt: 1,
   updatedAt: 1,
@@ -24,11 +33,26 @@ const publicPipeline = () => [
       from: 'users',
       localField: 'buyerId',
       foreignField: '_id',
-      pipeline: [{ $project: { _id: 0, fullName: 1, avatarUrl: 1 } }],
-      as: 'reviewer',
+      pipeline: [{ $project: { _id: 1, fullName: 1, avatarUrl: 1 } }],
+      as: 'buyer',
     },
   },
-  { $unwind: '$reviewer' },
+  { $unwind: { path: '$buyer', preserveNullAndEmptyArrays: true } },
+  {
+    $lookup: {
+      from: 'products',
+      localField: 'productId',
+      foreignField: '_id',
+      pipeline: [{ $project: { _id: 0, uuid: 1, title: 1 } }],
+      as: 'purchasedProduct',
+    },
+  },
+  {
+    $unwind: {
+      path: '$purchasedProduct',
+      preserveNullAndEmptyArrays: true,
+    },
+  },
   { $project: publicProjection },
 ];
 
@@ -122,14 +146,24 @@ export const aggregateByCatalogProduct = async (catalogProductId, session) => {
   );
 };
 
-export const list = async (catalogProductId, { rating, sort, skip, limit }) => {
+export const list = async (
+  catalogProductId,
+  { q, rating, sort, skip, limit },
+) => {
   const match = {
     catalogProductId: new mongoose.Types.ObjectId(catalogProductId),
   };
   if (rating !== undefined) match.rating = rating;
+  if (q)
+    match.comment = {
+      $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      $options: 'i',
+    };
   const sortMap = {
     newest: { createdAt: -1 },
     oldest: { createdAt: 1 },
+    highest: { rating: -1, createdAt: -1 },
+    lowest: { rating: 1, createdAt: -1 },
     rating_desc: { rating: -1, createdAt: -1 },
     rating_asc: { rating: 1, createdAt: -1 },
   };
@@ -184,4 +218,21 @@ export const reviewedOrderItemIds = async (orderItemIds) => {
     .select('orderItemId')
     .lean();
   return new Set(docs.map((doc) => String(doc.orderItemId)));
+};
+
+export const reviewsByOrderItemIds = async (orderItemIds) => {
+  const docs = await ProductReview.find({ orderItemId: { $in: orderItemIds } })
+    .select('_id orderItemId rating comment createdAt')
+    .lean();
+  return new Map(
+    docs.map((doc) => [
+      String(doc.orderItemId),
+      {
+        id: String(doc._id),
+        rating: doc.rating,
+        comment: doc.comment ?? null,
+        createdAt: doc.createdAt,
+      },
+    ]),
+  );
 };

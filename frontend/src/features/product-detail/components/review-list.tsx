@@ -1,155 +1,231 @@
-import { useState } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useProductReviews } from '@/features/catalog/hooks/use-catalog';
-import { useReviewEligibility } from '../hooks/use-review-eligibility';
-import { useReviewMutations } from '../hooks/use-review-mutations';
-import { ReviewForm } from './review-form';
+import type {
+  ProductDetail,
+  ProductReviewSummary,
+} from '@/features/catalog/types/catalog.types';
 import { Rating } from '@/components/rating';
 import { Avatar } from '@/components/avatar';
+import { Badge } from '@/components/badge';
 import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
-import { Modal } from '@/components/modal';
+import { Input } from '@/components/input';
 import { Pagination } from '@/components/pagination';
 import { Select } from '@/components/select';
 import { Skeleton } from '@/components/skeleton';
 import { EmptyState } from '@/components/empty-state';
-import { useToast } from '@/contexts/toast-context';
-import { messageFromError } from '@/features/auth/utils/auth-errors';
-import { formatRelative } from '@/utils/format-date';
+import { formatDate } from '@/utils/format-date';
 
-/** Paginated, filterable list of product reviews + a write-review entry point. */
-export function ReviewList({ productId }: { productId: string }) {
+const ratingKeys = ['5', '4', '3', '2', '1'] as const;
+
+interface ReviewListProps {
+  product: ProductDetail;
+}
+
+export function ReviewList({ product }: ReviewListProps) {
   const { t } = useTranslation();
-  const { notify } = useToast();
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState('newest');
-  const [rating, setRating] = useState('');
-  const [showForm, setShowForm] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [query, setQuery] = useState('');
+  const available = Boolean(
+    product.productReviewAvailable && product.catalogProduct?.ePID,
+  );
+  const summary = product.reviewSummary;
 
-  const { data: eligibility } = useReviewEligibility(productId);
-  const { create: createReview } = useReviewMutations();
+  const sortOptions = useMemo(
+    () => [
+      { value: 'newest', label: t('productDetail.sortNewest') },
+      { value: 'highest', label: t('productDetail.sortRatingHigh') },
+      { value: 'lowest', label: t('productDetail.sortRatingLow') },
+      { value: 'oldest', label: t('productDetail.sortOldest') },
+    ],
+    [t],
+  );
 
-  const submitReview = async (value: { rating: number; comment?: string }) => {
-    if (!eligibility) return;
-    try {
-      await createReview.mutateAsync({
-        productId,
-        orderId: eligibility.orderId,
-        orderItemId: eligibility.orderItemId,
-        rating: value.rating,
-        comment: value.comment,
-      });
-      notify(t('reviews.submittedToast'), 'success');
-      setShowForm(false);
-    } catch (err) {
-      notify(messageFromError(err), 'error');
-    }
+  const reviews = useProductReviews(
+    product.id,
+    {
+      page,
+      limit: 10,
+      sort,
+      q: query || undefined,
+    },
+    available,
+  );
+
+  if (!available || !summary) return null;
+
+  const submitSearch = (event: FormEvent) => {
+    event.preventDefault();
+    setQuery(searchInput.trim());
+    setPage(1);
   };
 
-  const SORT_OPTIONS = [
-    { value: 'newest', label: t('productDetail.sortNewest') },
-    { value: 'oldest', label: t('productDetail.sortOldest') },
-    { value: 'rating_desc', label: t('productDetail.sortRatingHigh') },
-    { value: 'rating_asc', label: t('productDetail.sortRatingLow') },
-  ];
-
-  const RATING_OPTIONS = [
-    { value: '', label: t('productDetail.filterAllStars') },
-    { value: '5', label: t('productDetail.filterStars', { count: 5 }) },
-    { value: '4', label: t('productDetail.filterStars', { count: 4 }) },
-    { value: '3', label: t('productDetail.filterStars', { count: 3 }) },
-    { value: '2', label: t('productDetail.filterStars', { count: 2 }) },
-    { value: '1', label: t('productDetail.filterStars', { count: 1 }) },
-  ];
-
-  const { data, isLoading } = useProductReviews(productId, {
-    page,
-    limit: 10,
-    sort,
-    rating: rating ? Number(rating) : undefined,
-  });
+  const reviewCount = summary.reviewCount;
+  const emptySearch = Boolean(query) && (reviews.data?.items.length ?? 0) === 0;
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-bold text-text">{t('productDetail.reviews')}</h2>
-          {eligibility && (
-            <Button size="sm" variant="secondary" onClick={() => setShowForm(true)}>
-              <Icon variant="icon-star" size={14} />
-              {t('reviews.writeReview')}
-            </Button>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <div className="w-36">
+    <section className="border-t border-border pt-8">
+      <h2 className="text-xl font-bold text-text">
+        {t('productDetail.ratingsAndReviews')}
+      </h2>
+
+      <div className="mt-5 grid gap-6 md:grid-cols-[minmax(12rem,18rem)_1fr]">
+        <RatingOverview summary={summary} />
+        <RatingHistogram summary={summary} />
+      </div>
+
+      <div className="mt-8 border-t border-border pt-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <h3 className="text-lg font-bold text-text">
+            {t('productDetail.reviewCountTitle', { count: reviewCount })}
+          </h3>
+
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem] lg:w-[36rem]">
+            <form
+              onSubmit={submitSearch}
+              className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+            >
+              <Input
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder={t('productDetail.searchReviews')}
+                aria-label={t('productDetail.searchReviews')}
+              />
+              <Button type="submit" variant="secondary">
+                <Icon variant="icon-search" size={16} />
+                {t('productDetail.search')}
+              </Button>
+            </form>
+
             <Select
-              options={RATING_OPTIONS}
-              value={rating}
-              onValueChange={(v) => {
-                setRating(v);
-                setPage(1);
-              }}
-              aria-label={t('productDetail.filterByStarLabel')}
-            />
-          </div>
-          <div className="w-40">
-            <Select
-              options={SORT_OPTIONS}
+              options={sortOptions}
               value={sort}
-              onValueChange={(v) => {
-                setSort(v);
+              onValueChange={(value) => {
+                setSort(value);
                 setPage(1);
               }}
               aria-label={t('productDetail.sortReviewsLabel')}
             />
           </div>
         </div>
+
+        {reviews.isLoading ? (
+          <div className="mt-5 flex flex-col gap-4">
+            {Array.from({ length: 3 }, (_, index) => (
+              <Skeleton key={index} className="h-24 w-full" />
+            ))}
+          </div>
+        ) : (reviews.data?.items.length ?? 0) === 0 ? (
+          <div className="mt-6">
+            <EmptyState
+              icon="icon-star"
+              title={
+                emptySearch
+                  ? t('productDetail.noReviewsMatchTitle')
+                  : t('productDetail.noProductReviewsYet')
+              }
+            />
+          </div>
+        ) : (
+          <ul className="mt-5 flex flex-col divide-y divide-border">
+            {reviews.data!.items.map((review) => {
+              const buyerName =
+                review.buyer?.displayName ?? review.reviewer.fullName;
+              return (
+                <li key={review.id} className="py-5">
+                  <div className="flex gap-3">
+                    <Avatar
+                      src={review.buyer?.avatarUrl ?? review.reviewer.avatarUrl}
+                      name={buyerName}
+                      size={40}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <Rating value={review.rating} size={15} />
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                        <span className="font-semibold text-text">
+                          {t('productDetail.byBuyer', { name: buyerName })}
+                        </span>
+                        <span className="text-muted">
+                          {formatDate(review.createdAt)}
+                        </span>
+                      </div>
+                      {review.comment && (
+                        <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-text">
+                          {review.comment}
+                        </p>
+                      )}
+                      {review.verifiedPurchase && (
+                        <Badge tone="success" className="mt-3 w-fit">
+                          {t('productDetail.verifiedPurchase')}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {reviews.data?.meta && reviews.data.meta.totalPages > 1 && (
+          <div className="mt-6">
+            <Pagination
+              page={reviews.data.meta.page}
+              totalPages={reviews.data.meta.totalPages}
+              onChange={setPage}
+            />
+          </div>
+        )}
       </div>
+    </section>
+  );
+}
 
-      {isLoading ? (
-        <div className="flex flex-col gap-4">
-          {Array.from({ length: 3 }, (_, i) => (
-            <Skeleton key={i} className="h-20 w-full" />
-          ))}
-        </div>
-      ) : (data?.items.length ?? 0) === 0 ? (
-        <EmptyState
-          icon="icon-star"
-          title={t('productDetail.noReviewsTitle')}
-          description={t('productDetail.noReviewsDescription')}
-        />
-      ) : (
-        <ul className="flex flex-col divide-y divide-border">
-          {data!.items.map((r) => (
-            <li key={r.id} className="flex gap-3 py-4">
-              <Avatar src={r.reviewer.avatarUrl} name={r.reviewer.fullName} size={40} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-text">{r.reviewer.fullName}</span>
-                  <span className="text-xs text-muted">{formatRelative(r.createdAt)}</span>
-                </div>
-                <Rating value={r.rating} size={14} className="my-1" />
-                {r.comment && <p className="text-sm text-text">{r.comment}</p>}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+function RatingOverview({ summary }: { summary: ProductReviewSummary }) {
+  const { t } = useTranslation();
+  const hasReviews = summary.reviewCount > 0 && summary.averageRating !== null;
+  return (
+    <div>
+      <div className="flex items-end gap-3">
+        <span className="text-5xl font-bold leading-none text-text">
+          {hasReviews ? summary.averageRating!.toFixed(1) : '-'}
+        </span>
+        {hasReviews && <Rating value={summary.averageRating} size={22} />}
+      </div>
+      <p className="mt-3 text-sm text-muted">
+        {t('productDetail.productRatings', { count: summary.reviewCount })}
+      </p>
+    </div>
+  );
+}
 
-      {data?.meta && (
-        <div className="mt-6">
-          <Pagination page={data.meta.page} totalPages={data.meta.totalPages} onChange={setPage} />
-        </div>
-      )}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title={t('reviews.modalTitle')}>
-        <ReviewForm
-          submitting={createReview.isPending}
-          onSubmit={submitReview}
-          onCancel={() => setShowForm(false)}
-        />
-      </Modal>
+function RatingHistogram({ summary }: { summary: ProductReviewSummary }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {ratingKeys.map((key) => {
+        const count = summary.ratingHistogram[key] ?? 0;
+        const width =
+          summary.reviewCount > 0 ? (count / summary.reviewCount) * 100 : 0;
+        return (
+          <div
+            key={key}
+            className="grid grid-cols-[1.5rem_1rem_minmax(0,1fr)_2rem] items-center gap-2 text-sm text-text"
+          >
+            <span>{key}</span>
+            <Icon variant="icon-star-fill" size={13} className="text-rating" />
+            <div className="h-2 overflow-hidden rounded-full bg-surface-2">
+              <div
+                className="h-full rounded-full bg-rating"
+                style={{ width: `${width}%` }}
+              />
+            </div>
+            <span className="text-right text-muted">{count}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

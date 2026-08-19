@@ -44,6 +44,21 @@ export interface CategorySummary {
   slug: string;
 }
 
+export interface CatalogProductSummary {
+  id: string;
+  ePID: string;
+  name: string;
+  brand?: string | null;
+  model?: string | null;
+}
+
+export interface ProductReviewSummary {
+  available?: boolean;
+  averageRating: number | null;
+  reviewCount: number;
+  ratingHistogram: Record<'1' | '2' | '3' | '4' | '5', number>;
+}
+
 export interface ProductListItem {
   id: string;
   title: string;
@@ -53,8 +68,11 @@ export interface ProductListItem {
   status: ProductStatus;
   listingType?: ListingType;
   offersEnabled?: boolean;
-  averageRating: number;
+  productReviewAvailable?: boolean;
+  averageRating: number | null;
   reviewCount: number;
+  reviewSummary: ProductReviewSummary | null;
+  catalogProduct: CatalogProductSummary | null;
   seller: SellerSummary;
   category: CategorySummary;
 }
@@ -74,7 +92,10 @@ export interface ProductReview {
   id: string;
   rating: number;
   comment: string | null;
+  verifiedPurchase: boolean;
+  buyer?: { id: string; displayName: string; avatarUrl: string | null } | null;
   reviewer: { fullName: string; avatarUrl: string | null };
+  purchasedProduct?: { id: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -7,6 +7,12 @@ const productReviewSchema = new mongoose.Schema(
       ref: 'Product',
       required: true,
     },
+    catalogProductId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CatalogProduct',
+      required: true,
+    },
+    ePID: { type: String, required: true, trim: true },
     buyerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -36,6 +42,8 @@ const productReviewSchema = new mongoose.Schema(
 );
 
 productReviewSchema.index({ productId: 1, createdAt: -1 });
+productReviewSchema.index({ catalogProductId: 1, createdAt: -1 });
+productReviewSchema.index({ ePID: 1, createdAt: -1 });
 productReviewSchema.index({ buyerId: 1, createdAt: -1 });
 
 export const ProductReview = mongoose.model(

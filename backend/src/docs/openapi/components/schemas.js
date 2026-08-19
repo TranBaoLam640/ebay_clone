@@ -232,6 +232,15 @@ export const schemas = {
       comment: { type: 'string', maxLength: 2000 },
     },
   },
+  CreateOrderItemProductReviewRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['rating'],
+    properties: {
+      rating,
+      comment: { type: 'string', maxLength: 2000 },
+    },
+  },
   UpdateProductReviewRequest: {
     type: 'object',
     minProperties: 1,
@@ -436,8 +445,20 @@ export const schemas = {
     type: 'object',
     properties: {
       id: objectId,
+      productId: objectId,
+      catalogProductId: objectId,
+      ePID: {
+        type: 'string',
+        example: 'SBAY-EPID-0001',
+        description: 'Project-local eBay-style catalog product identifier.',
+      },
       rating,
       comment: { type: 'string' },
+      verifiedPurchase: {
+        type: 'boolean',
+        readOnly: true,
+        example: true,
+      },
       reviewer: {
         type: 'object',
         properties: {
@@ -445,6 +466,62 @@ export const schemas = {
           avatarUrl: { type: 'string', format: 'uri', nullable: true },
         },
       },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  },
+  ProductReviewSummary: {
+    type: 'object',
+    required: ['averageRating', 'reviewCount', 'ratingHistogram'],
+    properties: {
+      averageRating: {
+        type: 'number',
+        nullable: true,
+        minimum: 0,
+        maximum: 5,
+      },
+      reviewCount: { type: 'integer', minimum: 0 },
+      ratingHistogram: {
+        type: 'object',
+        required: ['1', '2', '3', '4', '5'],
+        properties: {
+          1: { type: 'integer', minimum: 0 },
+          2: { type: 'integer', minimum: 0 },
+          3: { type: 'integer', minimum: 0 },
+          4: { type: 'integer', minimum: 0 },
+          5: { type: 'integer', minimum: 0 },
+        },
+      },
+    },
+  },
+  ProductRatingSummary: {
+    type: 'object',
+    required: ['averageRating', 'reviewCount'],
+    properties: {
+      averageRating: {
+        type: 'number',
+        nullable: true,
+        minimum: 0,
+        maximum: 5,
+      },
+      reviewCount: { type: 'integer', minimum: 0 },
+    },
+  },
+  CatalogProduct: {
+    type: 'object',
+    required: ['id', 'ePID', 'name'],
+    properties: {
+      id: objectId,
+      ePID: {
+        type: 'string',
+        example: 'SBAY-EPID-0001',
+        description: 'Project-local eBay-style catalog product identifier.',
+      },
+      name: { type: 'string' },
+      brand: { type: 'string', nullable: true },
+      model: { type: 'string', nullable: true },
+      categoryId: objectId,
+      imageUrl: { type: 'string', format: 'uri', nullable: true },
       createdAt: timestamp,
       updatedAt: timestamp,
     },
@@ -471,6 +548,11 @@ export const schemas = {
       status: { type: 'string', enum: ['ACTIVE', 'OUT_OF_STOCK'] },
       averageRating: { type: 'number', minimum: 0, maximum: 5 },
       reviewCount: { type: 'integer', minimum: 0 },
+      reviewSummary: { $ref: '#/components/schemas/ProductRatingSummary' },
+      catalogProduct: {
+        allOf: [{ $ref: '#/components/schemas/CatalogProduct' }],
+        nullable: true,
+      },
       seller: sellerSummary,
       category: categorySummary,
     },
@@ -506,6 +588,11 @@ export const schemas = {
       },
       averageRating: { type: 'number', minimum: 0, maximum: 5 },
       reviewCount: { type: 'integer', minimum: 0 },
+      reviewSummary: { $ref: '#/components/schemas/ProductRatingSummary' },
+      catalogProduct: {
+        allOf: [{ $ref: '#/components/schemas/CatalogProduct' }],
+        nullable: true,
+      },
       seller: sellerSummary,
       category: categorySummary,
       recentReviews: {

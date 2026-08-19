@@ -29,6 +29,31 @@ export const create = async (req, res, next) => {
   }
 };
 
+export const createForOrderItem = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.createForOrderItem(
+        req.user.id,
+        req.params.orderId,
+        req.params.orderItemId,
+        req.validated.body,
+      ),
+      201,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const summary = async (req, res, next) => {
+  try {
+    success(res, await service.summary(req.params.productId));
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const update = async (req, res, next) => {
   try {
     success(

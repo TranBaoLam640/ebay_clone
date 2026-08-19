@@ -61,6 +61,9 @@ const seed = async () => {
     seller: objectId(),
     seller2: objectId(),
     category: objectId(),
+    catalogProduct: objectId(),
+    catalogProduct2: objectId(),
+    catalogProduct3: objectId(),
     product: objectId(),
     product2: objectId(),
     product3: objectId(),
@@ -128,12 +131,33 @@ const seed = async () => {
       status: 'ACTIVE',
     },
   ]);
+  await models.CatalogProduct.create([
+    {
+      _id: ids.catalogProduct,
+      ePID: 'SBAY-EPID-U4-0001',
+      name: 'One',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.catalogProduct2,
+      ePID: 'SBAY-EPID-U4-0002',
+      name: 'Two',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.catalogProduct3,
+      ePID: 'SBAY-EPID-U4-0003',
+      name: 'Three',
+      categoryId: ids.category,
+    },
+  ]);
   await models.Product.create([
     {
       _id: ids.product,
       uuid: ids.productUuid,
       sellerId: ids.seller,
       categoryId: ids.category,
+      catalogProductId: ids.catalogProduct,
       title: 'One',
       description: 'One',
       price: 100,
@@ -145,6 +169,7 @@ const seed = async () => {
       uuid: ids.product2Uuid,
       sellerId: ids.seller2,
       categoryId: ids.category,
+      catalogProductId: ids.catalogProduct2,
       title: 'Two',
       description: 'Two',
       price: 200,
@@ -156,6 +181,7 @@ const seed = async () => {
       uuid: ids.product3Uuid,
       sellerId: ids.seller,
       categoryId: ids.category,
+      catalogProductId: ids.catalogProduct3,
       title: 'Three',
       description: 'Three',
       price: 300,
@@ -229,6 +255,7 @@ beforeAll(async () => {
     import('../../src/modules/categories/category.model.js'),
     import('../../src/modules/sellers/seller-profile.model.js'),
     import('../../src/modules/products/product.model.js'),
+    import('../../src/modules/catalog-products/catalog-product.model.js'),
     import('../../src/modules/addresses/address.model.js'),
     import('../../src/modules/carts/cart.model.js'),
     import('../../src/modules/coupons/coupon.model.js'),
@@ -248,20 +275,21 @@ beforeAll(async () => {
     Category: modules[1].Category,
     SellerProfile: modules[2].SellerProfile,
     Product: modules[3].Product,
-    Address: modules[4].Address,
-    Cart: modules[5].Cart,
-    Coupon: modules[6].Coupon,
-    CouponUsage: modules[7].CouponUsage,
-    CouponUserUsageCounter: modules[8].CouponUserUsageCounter,
-    Order: modules[9].Order,
-    Notification: modules[10].Notification,
-    CheckoutGroup: modules[11].CheckoutGroup,
-    IdempotencyRecord: modules[12].IdempotencyRecord,
-    Payment: modules[13].Payment,
-    ReturnRequest: modules[14].ReturnRequest,
+    CatalogProduct: modules[4].CatalogProduct,
+    Address: modules[5].Address,
+    Cart: modules[6].Cart,
+    Coupon: modules[7].Coupon,
+    CouponUsage: modules[8].CouponUsage,
+    CouponUserUsageCounter: modules[9].CouponUserUsageCounter,
+    Order: modules[10].Order,
+    Notification: modules[11].Notification,
+    CheckoutGroup: modules[12].CheckoutGroup,
+    IdempotencyRecord: modules[13].IdempotencyRecord,
+    Payment: modules[14].Payment,
+    ReturnRequest: modules[15].ReturnRequest,
   };
-  passwordHash = await modules[15].hashPassword(password);
-  signAccess = modules[16].signAccess;
+  passwordHash = await modules[16].hashPassword(password);
+  signAccess = modules[17].signAccess;
   await Promise.all(Object.values(models).map((model) => model.init()));
   ({ app } = await import('../../src/app.js'));
 });

@@ -67,7 +67,7 @@ export const parameter = (
   ...(description && { description }),
 });
 export const idParam = (name) => ({
-  $ref: `#/components/parameters/${{ addressId: 'AddressId', notificationId: 'NotificationId', categoryId: 'CategoryId', productId: 'ProductId', reviewId: 'ReviewId', sellerId: 'SellerId', orderId: 'OrderId', orderItemId: 'OrderItemId', feedbackId: 'FeedbackId', checkoutGroupId: 'CheckoutGroupId', returnId: 'ReturnId' }[name]}`,
+  $ref: `#/components/parameters/${{ addressId: 'AddressId', notificationId: 'NotificationId', categoryId: 'CategoryId', catalogProductId: 'CatalogProductId', productId: 'ProductId', reviewId: 'ReviewId', sellerId: 'SellerId', orderId: 'OrderId', orderItemId: 'OrderItemId', feedbackId: 'FeedbackId', checkoutGroupId: 'CheckoutGroupId', returnId: 'ReturnId' }[name]}`,
 });
 export const query = (name, schema, description) =>
   parameter(name, 'query', schema, false, description);

@@ -23,6 +23,14 @@ export const listProductReviewsSchema = z
   })
   .strict();
 
+export const reviewSummarySchema = z
+  .object({
+    body: z.any(),
+    params: z.object({ productId: productUuid }).strict(),
+    query: empty,
+  })
+  .strict();
+
 export const createProductReviewSchema = z
   .object({
     body: z
@@ -34,6 +42,19 @@ export const createProductReviewSchema = z
       })
       .strict(),
     params: z.object({ productId: productUuid }).strict(),
+    query: empty,
+  })
+  .strict();
+
+export const createOrderItemProductReviewSchema = z
+  .object({
+    body: z
+      .object({
+        rating: z.number().int().min(1).max(5),
+        comment,
+      })
+      .strict(),
+    params: z.object({ orderId: objectId, orderItemId: objectId }).strict(),
     query: empty,
   })
   .strict();

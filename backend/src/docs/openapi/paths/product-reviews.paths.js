@@ -16,6 +16,17 @@ const reviewBody = {
   comment: { type: 'string', maxLength: 2000 },
 };
 export const productReviewPaths = {
+  '/products/{productId}/review-summary': {
+    get: operation({
+      tag: 'Product Reviews',
+      operationId: 'getProductReviewSummary',
+      summary: 'Get shared catalog product review summary',
+      parameters: [idParam('productId')],
+      success: response('Product review summary', ref('ProductReviewSummary')),
+      errors: [400, 404, 429, 500],
+      security: [],
+    }),
+  },
   '/products/{productId}/reviews': {
     get: operation({
       tag: 'Product Reviews',
@@ -49,6 +60,21 @@ export const productReviewPaths = {
           ['orderId', 'orderItemId', 'rating'],
         ),
       ),
+      success: response('Review created', ref('ProductReview')),
+      successStatus: 201,
+      errors: [400, 401, 403, 404, 409, 413, 429, 500],
+      security: security.unsafe,
+    }),
+  },
+  '/orders/{orderId}/items/{orderItemId}/product-review': {
+    post: operation({
+      tag: 'Product Reviews',
+      operationId: 'createOrderItemProductReview',
+      summary: 'Review a delivered order item product',
+      parameters: [idParam('orderId'), idParam('orderItemId')],
+      requestBody: body({
+        $ref: '#/components/schemas/CreateOrderItemProductReviewRequest',
+      }),
       success: response('Review created', ref('ProductReview')),
       successStatus: 201,
       errors: [400, 401, 403, 404, 409, 413, 429, 500],

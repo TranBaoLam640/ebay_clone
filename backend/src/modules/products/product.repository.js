@@ -44,6 +44,27 @@ const relations = [
     },
   },
   { $unwind: '$category' },
+  {
+    $lookup: {
+      from: 'catalogproducts',
+      localField: 'catalogProductId',
+      foreignField: '_id',
+      pipeline: [
+        {
+          $project: {
+            _id: 0,
+            id: '$_id',
+            ePID: 1,
+            name: 1,
+            brand: 1,
+            model: 1,
+          },
+        },
+      ],
+      as: 'catalogProduct',
+    },
+  },
+  { $unwind: { path: '$catalogProduct', preserveNullAndEmptyArrays: true } },
 ];
 const normalizedStock = {
   $cond: [{ $eq: ['$status', 'OUT_OF_STOCK'] }, 0, '$stock'],
@@ -62,9 +83,52 @@ const summaryProjection = {
   offersEnabled: { $ifNull: ['$offersEnabled', false] },
   averageRating: 1,
   reviewCount: 1,
+  reviewSummary: {
+    averageRating: { $ifNull: ['$reviewSummary.averageRating', null] },
+    reviewCount: { $ifNull: ['$reviewSummary.reviewCount', 0] },
+  },
+  catalogProduct: { $ifNull: ['$catalogProduct', null] },
   seller: 1,
   category: 1,
 };
+
+const reviewSummaryLookup = [
+  {
+    $lookup: {
+      from: 'productreviews',
+      localField: 'catalogProductId',
+      foreignField: 'catalogProductId',
+      pipeline: [
+        {
+          $group: {
+            _id: null,
+            averageRating: { $avg: '$rating' },
+            reviewCount: { $sum: 1 },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            averageRating: { $round: ['$averageRating', 2] },
+            reviewCount: 1,
+          },
+        },
+      ],
+      as: 'reviewSummary',
+    },
+  },
+  {
+    $set: {
+      reviewSummary: { $arrayElemAt: ['$reviewSummary', 0] },
+      averageRating: {
+        $ifNull: [{ $arrayElemAt: ['$reviewSummary.averageRating', 0] }, 0],
+      },
+      reviewCount: {
+        $ifNull: [{ $arrayElemAt: ['$reviewSummary.reviewCount', 0] }, 0],
+      },
+    },
+  },
+];
 
 export const listVisible = async ({
   search,
@@ -105,6 +169,7 @@ export const listVisible = async ({
         items: [
           { $skip: (page - 1) * limit },
           { $limit: limit },
+          ...reviewSummaryLookup,
           { $project: summaryProjection },
         ],
         total: [{ $count: 'count' }],
@@ -128,6 +193,20 @@ export const updateReviewAggregate = (productId, aggregate, session) =>
   })
     .lean()
     .exec();
+
+export const updateCatalogReviewAggregate = (
+  catalogProductId,
+  aggregate,
+  session,
+) =>
+  Product.updateMany(
+    { catalogProductId },
+    {
+      averageRating: aggregate.averageRating ?? 0,
+      reviewCount: aggregate.reviewCount,
+    },
+    { session, runValidators: true },
+  );
 
 export const findBuyerCartProducts = (productIds, session) =>
   Product.aggregate([
@@ -272,7 +351,9 @@ const auctionAvailabilityFields = {
                 { $eq: ['$auction.bidCount', 0] },
                 {
                   $and: [
-                    { $ne: [{ $ifNull: ['$auction.reservePrice', null] }, null] },
+                    {
+                      $ne: [{ $ifNull: ['$auction.reservePrice', null] }, null],
+                    },
                     { $ne: ['$auction.reserveMet', true] },
                   ],
                 },
@@ -322,6 +403,17 @@ export const findPublicByIds = async (ids) => {
   return new Map(docs.map((doc) => [String(doc._id), doc]));
 };
 
+export const findByInternalId = (productId, session) =>
+  Product.findById(productId)
+    .select('_id uuid sellerId catalogProductId title')
+    .session(session || null)
+    .lean();
+
+export const findVisibleInternalByUuid = (productUuid) =>
+  Product.findOne({ uuid: productUuid, status: { $in: visibleStatuses } })
+    .select('_id uuid sellerId catalogProductId')
+    .lean();
+
 // Map(idString → auction product) for a batch of ids (My Bids).
 export const findAuctionsByIds = async (ids) => {
   const docs = await Product.find({ _id: { $in: ids }, listingType: 'AUCTION' })
@@ -334,6 +426,7 @@ export const findVisibleById = async (productUuid) => {
   const [product] = await Product.aggregate([
     { $match: { uuid: productUuid, status: { $in: visibleStatuses } } },
     ...relations,
+    ...reviewSummaryLookup,
     {
       $project: {
         _id: 0,
@@ -359,6 +452,11 @@ export const findVisibleById = async (productUuid) => {
         },
         averageRating: 1,
         reviewCount: 1,
+        reviewSummary: {
+          averageRating: { $ifNull: ['$reviewSummary.averageRating', null] },
+          reviewCount: { $ifNull: ['$reviewSummary.reviewCount', 0] },
+        },
+        catalogProduct: { $ifNull: ['$catalogProduct', null] },
         seller: 1,
         category: 1,
         offersEnabled: { $ifNull: ['$offersEnabled', false] },

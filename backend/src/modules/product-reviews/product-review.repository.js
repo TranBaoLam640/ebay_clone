@@ -6,6 +6,10 @@ const publicProjection = {
   id: '$_id',
   rating: 1,
   comment: 1,
+  productId: 1,
+  catalogProductId: 1,
+  ePID: 1,
+  verifiedPurchase: { $literal: true },
   reviewer: {
     fullName: '$reviewer.fullName',
     avatarUrl: '$reviewer.avatarUrl',
@@ -75,8 +79,53 @@ export const aggregate = async (productId, session) => {
   return result || { averageRating: 0, reviewCount: 0 };
 };
 
-export const list = async (productId, { rating, sort, skip, limit }) => {
-  const match = { productId: new mongoose.Types.ObjectId(productId) };
+export const aggregateByCatalogProduct = async (catalogProductId, session) => {
+  const [result] = await ProductReview.aggregate([
+    {
+      $match: {
+        catalogProductId: new mongoose.Types.ObjectId(catalogProductId),
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        averageRating: { $avg: '$rating' },
+        reviewCount: { $sum: 1 },
+        oneStar: { $sum: { $cond: [{ $eq: ['$rating', 1] }, 1, 0] } },
+        twoStar: { $sum: { $cond: [{ $eq: ['$rating', 2] }, 1, 0] } },
+        threeStar: { $sum: { $cond: [{ $eq: ['$rating', 3] }, 1, 0] } },
+        fourStar: { $sum: { $cond: [{ $eq: ['$rating', 4] }, 1, 0] } },
+        fiveStar: { $sum: { $cond: [{ $eq: ['$rating', 5] }, 1, 0] } },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        averageRating: { $round: ['$averageRating', 2] },
+        reviewCount: 1,
+        ratingHistogram: {
+          1: '$oneStar',
+          2: '$twoStar',
+          3: '$threeStar',
+          4: '$fourStar',
+          5: '$fiveStar',
+        },
+      },
+    },
+  ]).session(session || null);
+  return (
+    result || {
+      averageRating: null,
+      reviewCount: 0,
+      ratingHistogram: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    }
+  );
+};
+
+export const list = async (catalogProductId, { rating, sort, skip, limit }) => {
+  const match = {
+    catalogProductId: new mongoose.Types.ObjectId(catalogProductId),
+  };
   if (rating !== undefined) match.rating = rating;
   const sortMap = {
     newest: { createdAt: -1 },
@@ -104,6 +153,18 @@ export const list = async (productId, { rating, sort, skip, limit }) => {
 export const recent = (productId, limit = 5) =>
   ProductReview.aggregate([
     { $match: { productId: new mongoose.Types.ObjectId(productId) } },
+    { $sort: { createdAt: -1 } },
+    { $limit: limit },
+    ...publicPipeline(),
+  ]);
+
+export const recentByCatalogProduct = (catalogProductId, limit = 5) =>
+  ProductReview.aggregate([
+    {
+      $match: {
+        catalogProductId: new mongoose.Types.ObjectId(catalogProductId),
+      },
+    },
     { $sort: { createdAt: -1 } },
     { $limit: limit },
     ...publicPipeline(),

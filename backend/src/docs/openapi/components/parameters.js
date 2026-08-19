@@ -27,6 +27,10 @@ export const parameters = {
   AddressId: identifier('addressId', 'Address identifier.'),
   NotificationId: identifier('notificationId', 'Notification identifier.'),
   CategoryId: identifier('categoryId', 'Category identifier.'),
+  CatalogProductId: identifier(
+    'catalogProductId',
+    'Shared catalog product identifier.',
+  ),
   ProductId: identifier('productId', 'Product identifier.'),
   ReviewId: identifier('reviewId', 'Product review identifier.'),
   SellerId: identifier(

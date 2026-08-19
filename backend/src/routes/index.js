@@ -6,6 +6,7 @@ import { notificationRoute } from '../modules/notifications/route.js';
 import { categoryRoute } from '../modules/categories/category.route.js';
 import { sellerRoute } from '../modules/sellers/seller.route.js';
 import { productRoute } from '../modules/products/product.route.js';
+import { catalogProductRoute } from '../modules/catalog-products/catalog-product.route.js';
 import {
   auctionMeRoute,
   nestedAuctionRoute,
@@ -18,6 +19,7 @@ import {
 } from '../modules/offers/offer.route.js';
 import {
   nestedProductReviewRoute,
+  orderProductReviewRoute,
   productReviewRoute,
 } from '../modules/product-reviews/product-review.route.js';
 import {
@@ -41,6 +43,7 @@ routes.use('/users', userRoute);
 routes.use('/addresses', addressRoute);
 routes.use('/notifications', notificationRoute);
 routes.use('/categories', categoryRoute);
+routes.use('/catalog-products', catalogProductRoute);
 routes.use(
   '/products',
   productRoute,
@@ -52,7 +55,12 @@ routes.use('/me', auctionMeRoute, offerMeRoute);
 routes.use('/offers', offerActionRoute);
 routes.use('/sellers', sellerRoute, sellerFeedbackPublicRoute);
 routes.use('/product-reviews', productReviewRoute);
-routes.use('/orders', orderSellerFeedbackRoute, orderRoute);
+routes.use(
+  '/orders',
+  orderProductReviewRoute,
+  orderSellerFeedbackRoute,
+  orderRoute,
+);
 routes.use('/seller-feedbacks', sellerFeedbackRoute);
 routes.use('/cart', cartRoute);
 routes.use('/coupons', couponRoute);

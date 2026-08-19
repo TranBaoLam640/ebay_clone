@@ -149,6 +149,13 @@ const seed = async () => {
     inactiveSellerProductUuid: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
     inactiveCategoryProduct: objectId(),
     inactiveCategoryProductUuid: '11111111-1111-4111-8111-111111111111',
+    catalogProduct: objectId(),
+    outOfStockCatalogProduct: objectId(),
+    draftCatalogProduct: objectId(),
+    hiddenCatalogProduct: objectId(),
+    deletedCatalogProduct: objectId(),
+    inactiveSellerCatalogProduct: objectId(),
+    inactiveCategoryCatalogProduct: objectId(),
     order: objectId(),
     orderItem: objectId(),
     selfOrder: objectId(),
@@ -229,12 +236,59 @@ const seed = async () => {
       status: 'INACTIVE',
     },
   ]);
+  await models.CatalogProduct.create([
+    {
+      _id: ids.catalogProduct,
+      ePID: 'SBAY-EPID-TEST-0001',
+      name: 'Precision Laptop',
+      brand: 'SBay',
+      model: 'Precision',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.outOfStockCatalogProduct,
+      ePID: 'SBAY-EPID-TEST-0002',
+      name: 'Wireless Headphones',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.draftCatalogProduct,
+      ePID: 'SBAY-EPID-TEST-0003',
+      name: 'Draft Laptop',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.hiddenCatalogProduct,
+      ePID: 'SBAY-EPID-TEST-0004',
+      name: 'Hidden Laptop',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.deletedCatalogProduct,
+      ePID: 'SBAY-EPID-TEST-0005',
+      name: 'Deleted Laptop',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.inactiveSellerCatalogProduct,
+      ePID: 'SBAY-EPID-TEST-0006',
+      name: 'Closed Shop Laptop',
+      categoryId: ids.category,
+    },
+    {
+      _id: ids.inactiveCategoryCatalogProduct,
+      ePID: 'SBAY-EPID-TEST-0007',
+      name: 'Archived Laptop',
+      categoryId: ids.inactiveCategory,
+    },
+  ]);
   await models.Product.create([
     {
       _id: ids.product,
       uuid: ids.productUuid,
       sellerId: ids.seller,
       categoryId: ids.category,
+      catalogProductId: ids.catalogProduct,
       title: 'Precision Laptop',
       description: 'Portable developer workstation',
       price: 2500,
@@ -275,6 +329,7 @@ const seed = async () => {
       uuid: ids.outOfStockProductUuid,
       sellerId: ids.seller,
       categoryId: ids.category,
+      catalogProductId: ids.outOfStockCatalogProduct,
       title: 'Wireless Headphones',
       description: 'Noise cancelling audio',
       price: 300,
@@ -286,6 +341,7 @@ const seed = async () => {
       uuid: ids.draftProductUuid,
       sellerId: ids.seller,
       categoryId: ids.category,
+      catalogProductId: ids.draftCatalogProduct,
       title: 'Draft Laptop',
       description: 'Not yet published',
       price: 80,
@@ -297,6 +353,7 @@ const seed = async () => {
       uuid: ids.hiddenProductUuid,
       sellerId: ids.seller,
       categoryId: ids.category,
+      catalogProductId: ids.hiddenCatalogProduct,
       title: 'Hidden Laptop',
       description: 'Not buyer visible',
       price: 100,
@@ -308,6 +365,7 @@ const seed = async () => {
       uuid: ids.deletedProductUuid,
       sellerId: ids.seller,
       categoryId: ids.category,
+      catalogProductId: ids.deletedCatalogProduct,
       title: 'Deleted Laptop',
       description: 'Removed from sale',
       price: 70,
@@ -319,6 +377,7 @@ const seed = async () => {
       uuid: ids.inactiveSellerProductUuid,
       sellerId: ids.inactiveSeller,
       categoryId: ids.category,
+      catalogProductId: ids.inactiveSellerCatalogProduct,
       title: 'Closed Shop Laptop',
       description: 'Not buyer visible',
       price: 100,
@@ -330,6 +389,7 @@ const seed = async () => {
       uuid: ids.inactiveCategoryProductUuid,
       sellerId: ids.seller,
       categoryId: ids.inactiveCategory,
+      catalogProductId: ids.inactiveCategoryCatalogProduct,
       title: 'Archived Laptop',
       description: 'Not buyer visible',
       price: 100,
@@ -381,6 +441,7 @@ beforeAll(async () => {
     { Product },
     { Order },
     { ProductReview },
+    { CatalogProduct },
     { SellerFeedback },
     { hashPassword },
   ] = await Promise.all([
@@ -390,6 +451,7 @@ beforeAll(async () => {
     import('../../src/modules/products/product.model.js'),
     import('../../src/modules/orders/order.model.js'),
     import('../../src/modules/product-reviews/product-review.model.js'),
+    import('../../src/modules/catalog-products/catalog-product.model.js'),
     import('../../src/modules/seller-feedbacks/seller-feedback.model.js'),
     import('../../src/common/utils/hash.js'),
   ]);
@@ -400,6 +462,7 @@ beforeAll(async () => {
     Product,
     Order,
     ProductReview,
+    CatalogProduct,
     SellerFeedback,
   };
   passwordHash = await hashPassword(password);
@@ -596,6 +659,17 @@ describe('User 2 catalog and reputation', () => {
     const detail = await request(app)
       .get(`${prefix}/products/${ids.productUuid}`)
       .expect(200);
+    expect(detail.body.data.catalogProduct).toEqual(
+      expect.objectContaining({
+        id: String(ids.catalogProduct),
+        ePID: 'SBAY-EPID-TEST-0001',
+        name: 'Precision Laptop',
+      }),
+    );
+    expect(detail.body.data.reviewSummary).toEqual({
+      averageRating: null,
+      reviewCount: 0,
+    });
     expect(detail.body.data.attributes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ dataType: 'string', value: 'silver' }),
@@ -624,6 +698,41 @@ describe('User 2 catalog and reputation', () => {
     await request(app).get(`${prefix}/products/not-an-id`).expect(400);
   });
 
+  it('lists catalog products, filters by ePID, and enforces unique ePID', async () => {
+    await request(app)
+      .get(`${prefix}/catalog-products?q=Precision&page=1&limit=5`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data).toEqual([
+          expect.objectContaining({
+            id: String(ids.catalogProduct),
+            ePID: 'SBAY-EPID-TEST-0001',
+            name: 'Precision Laptop',
+            brand: 'SBay',
+            model: 'Precision',
+          }),
+        ]);
+      });
+    await request(app)
+      .get(`${prefix}/catalog-products?ePID=SBAY-EPID-TEST-0001`)
+      .expect(200)
+      .then(({ body }) =>
+        expect(body.data[0]).toEqual(
+          expect.objectContaining({ id: String(ids.catalogProduct) }),
+        ),
+      );
+    await request(app)
+      .get(`${prefix}/catalog-products/${ids.catalogProduct}`)
+      .expect(200)
+      .then(({ body }) => expect(body.data.ePID).toBe('SBAY-EPID-TEST-0001'));
+    await expect(
+      models.CatalogProduct.create({
+        ePID: 'SBAY-EPID-TEST-0001',
+        name: 'Duplicate ePID',
+      }),
+    ).rejects.toMatchObject({ code: 11000 });
+  });
+
   it('hides suspended sellers and their products', async () => {
     await models.SellerProfile.updateOne(
       { _id: ids.seller },
@@ -638,6 +747,8 @@ describe('User 2 catalog and reputation', () => {
     await models.ProductReview.create(
       Array.from({ length: 6 }, (_, index) => ({
         productId: ids.product,
+        catalogProductId: ids.catalogProduct,
+        ePID: 'SBAY-EPID-TEST-0001',
         buyerId: ids.buyer,
         orderId: ids.order,
         orderItemId: new mongoose.Types.ObjectId(),
@@ -698,6 +809,296 @@ describe('User 2 catalog and reputation', () => {
     ).toBe(403);
   });
 
+  it('creates canonical order-item product reviews from server-derived transaction and catalog identity', async () => {
+    const buyer = await login('buyer@example.test');
+    await request(app)
+      .post(
+        `${prefix}/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+      )
+      .send({ rating: 5 })
+      .expect(403);
+
+    const review = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+      {
+        rating: 5,
+        comment: 'Excellent product',
+        buyerId: String(ids.otherBuyer),
+        productId: String(ids.outOfStockProduct),
+        catalogProductId: String(ids.outOfStockCatalogProduct),
+        ePID: 'FORGED',
+        orderId: String(ids.selfOrder),
+        orderItemId: String(ids.selfOrderItem),
+      },
+    );
+    expect(review.status).toBe(400);
+
+    const created = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+      { rating: 5, comment: 'Excellent product' },
+    );
+    expect(created.status).toBe(201);
+    expect(created.body.data).toEqual(
+      expect.objectContaining({
+        rating: 5,
+        comment: 'Excellent product',
+        productId: String(ids.product),
+        catalogProductId: String(ids.catalogProduct),
+        ePID: 'SBAY-EPID-TEST-0001',
+        verifiedPurchase: true,
+      }),
+    );
+    const stored = await models.ProductReview.findById(
+      created.body.data.id,
+    ).lean();
+    expect(stored).toEqual(
+      expect.objectContaining({
+        buyerId: ids.buyer,
+        orderId: ids.order,
+        orderItemId: ids.orderItem,
+        productId: ids.product,
+        catalogProductId: ids.catalogProduct,
+        ePID: 'SBAY-EPID-TEST-0001',
+      }),
+    );
+  });
+
+  it('validates product review rating, rejects self review, and enforces one review per order item', async () => {
+    const buyer = await login('buyer@example.test');
+    const sellerOwner = await login('seller@example.test');
+    const pendingOrder = new mongoose.Types.ObjectId();
+    const pendingItem = new mongoose.Types.ObjectId();
+    await models.Order.create({
+      _id: pendingOrder,
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      orderStatus: 'PENDING_PAYMENT',
+      items: [
+        {
+          _id: pendingItem,
+          productId: ids.product,
+          sellerId: ids.seller,
+          quantity: 1,
+        },
+      ],
+    });
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${pendingOrder}/items/${pendingItem}/product-review`,
+      { rating: 5 },
+    ).then(({ status }) => expect(status).toBe(403));
+    for (const rating of [0, 6, 4.5]) {
+      await mutate(
+        buyer,
+        'post',
+        `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+        { rating },
+      ).then(({ status }) => expect(status).toBe(400));
+    }
+    await mutate(
+      sellerOwner,
+      'post',
+      `/orders/${ids.selfOrder}/items/${ids.selfOrderItem}/product-review`,
+      { rating: 5 },
+    ).then(({ status }) => expect(status).toBe(403));
+
+    const first = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+      { rating: 4 },
+    );
+    expect(first.status).toBe(201);
+    expect(first.body.data.id).toEqual(expect.any(String));
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+      { rating: 5 },
+    ).then(({ status }) => expect(status).toBe(409));
+  });
+
+  it('serializes concurrent duplicate product reviews for one purchased item', async () => {
+    const buyer = await login('buyer@example.test');
+    const [a, b] = await Promise.all([
+      mutate(
+        buyer,
+        'post',
+        `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+        { rating: 5 },
+      ),
+      mutate(
+        buyer,
+        'post',
+        `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+        { rating: 4 },
+      ),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    expect(await models.ProductReview.countDocuments()).toBe(1);
+  });
+
+  it('shares product reviews across seller listings by catalog product and isolates different catalogs', async () => {
+    const buyer = await login('buyer@example.test');
+    const other = await login('other@example.test');
+    const sellerUser2 = new mongoose.Types.ObjectId();
+    const seller2 = new mongoose.Types.ObjectId();
+    const listingB = new mongoose.Types.ObjectId();
+    const listingBUuid = '22222222-2222-4222-8222-222222222222';
+    const catalogY = new mongoose.Types.ObjectId();
+    const listingC = new mongoose.Types.ObjectId();
+    const listingCUuid = '33333333-3333-4333-8333-333333333333';
+    const orderB = new mongoose.Types.ObjectId();
+    const itemB = new mongoose.Types.ObjectId();
+    const orderC = new mongoose.Types.ObjectId();
+    const itemC = new mongoose.Types.ObjectId();
+
+    await models.User.create({
+      _id: sellerUser2,
+      email: 'seller2@example.test',
+      passwordHash,
+      fullName: 'Second Seller Owner',
+      status: 'ACTIVE',
+      isEmailVerified: true,
+    });
+    await models.SellerProfile.create({
+      _id: seller2,
+      userId: sellerUser2,
+      displayName: 'Second Tech',
+      status: 'ACTIVE',
+    });
+    await models.CatalogProduct.create({
+      _id: catalogY,
+      ePID: 'SBAY-EPID-TEST-9999',
+      name: 'Separate Product',
+      categoryId: ids.category,
+    });
+    await models.Product.create([
+      {
+        _id: listingB,
+        uuid: listingBUuid,
+        sellerId: seller2,
+        categoryId: ids.category,
+        catalogProductId: ids.catalogProduct,
+        title: 'Precision Laptop - Second Tech Listing',
+        description: 'Same catalog product from another seller',
+        price: 2400,
+        stock: 3,
+        status: 'ACTIVE',
+      },
+      {
+        _id: listingC,
+        uuid: listingCUuid,
+        sellerId: seller2,
+        categoryId: ids.category,
+        catalogProductId: catalogY,
+        title: 'Separate Product Listing',
+        description: 'Different catalog product',
+        price: 100,
+        stock: 3,
+        status: 'ACTIVE',
+      },
+    ]);
+    await models.Order.create([
+      {
+        _id: orderB,
+        buyerId: ids.otherBuyer,
+        sellerId: seller2,
+        orderStatus: 'DELIVERED',
+        items: [
+          {
+            _id: itemB,
+            productId: listingB,
+            sellerId: seller2,
+            quantity: 1,
+          },
+        ],
+      },
+      {
+        _id: orderC,
+        buyerId: ids.otherBuyer,
+        sellerId: seller2,
+        orderStatus: 'DELIVERED',
+        items: [
+          {
+            _id: itemC,
+            productId: listingC,
+            sellerId: seller2,
+            quantity: 1,
+          },
+        ],
+      },
+    ]);
+
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/product-review`,
+      { rating: 5, comment: 'Shared review A' },
+    ).then(({ status }) => expect(status).toBe(201));
+    await mutate(
+      other,
+      'post',
+      `/orders/${orderB}/items/${itemB}/product-review`,
+      { rating: 3, comment: 'Shared review B' },
+    ).then(({ status }) => expect(status).toBe(201));
+    await mutate(
+      other,
+      'post',
+      `/orders/${orderC}/items/${itemC}/product-review`,
+      { rating: 2, comment: 'Different catalog review' },
+    ).then(({ status }) => expect(status).toBe(201));
+
+    for (const productUuid of [ids.productUuid, listingBUuid]) {
+      await request(app)
+        .get(`${prefix}/products/${productUuid}/review-summary`)
+        .expect(200)
+        .then(({ body }) =>
+          expect(body.data).toEqual({
+            averageRating: 4,
+            reviewCount: 2,
+            ratingHistogram: { 1: 0, 2: 0, 3: 1, 4: 0, 5: 1 },
+          }),
+        );
+      await request(app)
+        .get(`${prefix}/products/${productUuid}/reviews`)
+        .expect(200)
+        .then(({ body }) => {
+          expect(body.data.map((review) => review.comment).sort()).toEqual([
+            'Shared review A',
+            'Shared review B',
+          ]);
+        });
+      await request(app)
+        .get(`${prefix}/products/${productUuid}`)
+        .expect(200)
+        .then(({ body }) => {
+          expect(body.data.reviewSummary).toEqual({
+            averageRating: 4,
+            reviewCount: 2,
+          });
+          expect(body.data.averageRating).toBe(4);
+          expect(body.data.reviewCount).toBe(2);
+        });
+    }
+
+    await request(app)
+      .get(`${prefix}/products/${listingCUuid}/review-summary`)
+      .expect(200)
+      .then(({ body }) =>
+        expect(body.data).toEqual({
+          averageRating: 2,
+          reviewCount: 1,
+          ratingHistogram: { 1: 0, 2: 1, 3: 0, 4: 0, 5: 0 },
+        }),
+      );
+  });
+
   it('rejects feedback for wrong buyer or order and paginates public feedback', async () => {
     const buyer = await login('buyer@example.test');
     const other = await login('other@example.test');
@@ -740,9 +1141,10 @@ describe('User 2 catalog and reputation', () => {
       await import('../../src/modules/products/product.repository.js');
     const feedbackRepository =
       await import('../../src/modules/sellers/seller.repository.js');
-    vi.spyOn(reviewRepository, 'updateReviewAggregate').mockRejectedValueOnce(
-      new Error('aggregate failed'),
-    );
+    vi.spyOn(
+      reviewRepository,
+      'updateCatalogReviewAggregate',
+    ).mockRejectedValueOnce(new Error('aggregate failed'));
     await mutate(
       buyer,
       'post',

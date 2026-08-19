@@ -1,4 +1,3 @@
-import mongoose from 'mongoose';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { connectDatabase, disconnectDatabase } from '../config/database.js';
 import { env } from '../config/env.js';
@@ -6,6 +5,7 @@ import { hashPassword } from '../common/utils/hash.js';
 import { User } from '../modules/users/user.model.js';
 import { SellerProfile } from '../modules/sellers/seller-profile.model.js';
 import { Category } from '../modules/categories/category.model.js';
+import { CatalogProduct } from '../modules/catalog-products/catalog-product.model.js';
 import { Product } from '../modules/products/product.model.js';
 import { Coupon } from '../modules/coupons/coupon.model.js';
 import {
@@ -102,10 +102,33 @@ const auctionTitles = new Set([
 const productSeeds = [
   {
     title: 'Samsung Galaxy S23 Ultra - 256 GB - Phantom Black (Unlocked)',
+    catalogEPID: 'SBAY-EPID-0001',
+    catalogName: 'Samsung Galaxy S23 Ultra',
+    brand: 'Samsung',
+    model: 'Galaxy S23 Ultra',
     categorySlug: 'phones',
     seller: 'Tech Haven',
     price: 12990000,
     stock: 18,
+    status: 'ACTIVE',
+    imageKeys: ['products/samsung-galaxy-s23.webp'],
+    attributes: [
+      ['Storage', 256, 'number', 'GB'],
+      ['Color', 'Phantom Black'],
+      ['Network', 'Unlocked'],
+    ],
+  },
+  {
+    title:
+      'Samsung Galaxy S23 Ultra - 256 GB - Phantom Black (Unlocked) - Urban Style Listing',
+    catalogEPID: 'SBAY-EPID-0001',
+    catalogName: 'Samsung Galaxy S23 Ultra',
+    brand: 'Samsung',
+    model: 'Galaxy S23 Ultra',
+    categorySlug: 'phones',
+    seller: 'Urban Style',
+    price: 12790000,
+    stock: 9,
     status: 'ACTIVE',
     imageKeys: ['products/samsung-galaxy-s23.webp'],
     attributes: [
@@ -797,11 +820,60 @@ const auctionFor = (price) => ({
   reserveMet: false,
 });
 
+const catalogEPIDFor = (seed, index) =>
+  seed.catalogEPID || `SBAY-EPID-${String(index + 1).padStart(4, '0')}`;
+
+const expectedImageKeys = () => [
+  ...new Set(productSeeds.flatMap((seed) => seed.imageKeys)),
+];
+
+const attributeValue = (seed, name) =>
+  seed.attributes.find((attribute) => attribute[0] === name)?.[1];
+
+const catalogDocumentFor = ({ seed, index, categoryBySlug }) => ({
+  ePID: catalogEPIDFor(seed, index),
+  name: seed.catalogName || seed.title.trim(),
+  brand: seed.brand || attributeValue(seed, 'Brand'),
+  model: seed.model || attributeValue(seed, 'Model'),
+  categoryId: categoryBySlug.get(seed.categorySlug)._id,
+  imageUrl: publicUrlForKey(seed.imageKeys[0]),
+  identifiers: {
+    ...(attributeValue(seed, 'MPN') && { mpn: attributeValue(seed, 'MPN') }),
+    ...(attributeValue(seed, 'UPC') && { upc: attributeValue(seed, 'UPC') }),
+    ...(attributeValue(seed, 'EAN') && { ean: attributeValue(seed, 'EAN') }),
+  },
+});
+
+const upsertCatalogProducts = async ({ categoryBySlug }) => {
+  const catalogByEPID = new Map();
+  for (const [index, seed] of productSeeds.entries()) {
+    const document = catalogDocumentFor({ seed, index, categoryBySlug });
+    await CatalogProduct.updateOne(
+      { ePID: document.ePID },
+      {
+        $set: {
+          ...document,
+          updatedAt: now,
+        },
+        $setOnInsert: { createdAt: now },
+      },
+      { upsert: true },
+    );
+  }
+  const docs = await CatalogProduct.find({
+    ePID: { $in: productSeeds.map(catalogEPIDFor) },
+  }).lean();
+  for (const doc of docs) catalogByEPID.set(doc.ePID, doc);
+  return catalogByEPID;
+};
+
 const buildProductDocument = ({ seed, categoryBySlug, sellerByName }) => {
+  const catalogProduct = seed.catalogProduct;
   const listingType = auctionTitles.has(seed.title) ? 'AUCTION' : 'FIXED';
   return {
     sellerId: sellerByName.get(seed.seller)._id,
     categoryId: categoryBySlug.get(seed.categorySlug)._id,
+    catalogProductId: catalogProduct?._id,
     title: seed.title.trim(),
     description: descriptionFor(seed),
     price: seed.price,
@@ -847,16 +919,24 @@ const validatePreparedData = ({ categoryBySlug, sellers, availableKeys }) => {
   return sellerByName;
 };
 
-const upsertProducts = async ({ categoryBySlug, sellers, availableKeys }) => {
+const upsertProducts = async ({
+  categoryBySlug,
+  sellers,
+  availableKeys,
+  catalogByEPID,
+}) => {
   const sellerByName = validatePreparedData({
     categoryBySlug,
     sellers,
     availableKeys,
   });
 
-  for (const seed of productSeeds) {
+  for (const [index, seed] of productSeeds.entries()) {
     const document = buildProductDocument({
-      seed,
+      seed: {
+        ...seed,
+        catalogProduct: catalogByEPID.get(catalogEPIDFor(seed, index)),
+      },
       categoryBySlug,
       sellerByName,
     });
@@ -906,6 +986,9 @@ const seedCounts = async () => {
       displayName: { $in: sellerSeeds.map((seller) => seller.displayName) },
     }),
     categories: await Category.countDocuments({ slug: { $in: categorySlugs } }),
+    catalogProducts: await CatalogProduct.countDocuments({
+      ePID: { $in: productSeeds.map(catalogEPIDFor) },
+    }),
     products: await Product.countDocuments({
       title: { $in: productSeeds.map((product) => product.title) },
     }),
@@ -914,36 +997,6 @@ const seedCounts = async () => {
     }),
   };
 };
-
-const productBreakdown = async () => ({
-  total: await Product.countDocuments({
-    title: { $in: productSeeds.map((product) => product.title) },
-  }),
-  active: await Product.countDocuments({
-    title: { $in: productSeeds.map((product) => product.title) },
-    status: 'ACTIVE',
-  }),
-  outOfStock: await Product.countDocuments({
-    title: { $in: productSeeds.map((product) => product.title) },
-    status: 'OUT_OF_STOCK',
-  }),
-  hiddenOrDraft: await Product.countDocuments({
-    title: { $in: productSeeds.map((product) => product.title) },
-    status: { $in: ['HIDDEN', 'DRAFT'] },
-  }),
-  fixed: await Product.countDocuments({
-    title: { $in: productSeeds.map((product) => product.title) },
-    listingType: 'FIXED',
-  }),
-  auction: await Product.countDocuments({
-    title: { $in: productSeeds.map((product) => product.title) },
-    listingType: 'AUCTION',
-  }),
-  offersEnabled: await Product.countDocuments({
-    title: { $in: productSeeds.map((product) => product.title) },
-    offersEnabled: true,
-  }),
-});
 
 const printSummary = async ({ availableKeys, dryRun }) => {
   const counts = dryRun
@@ -956,6 +1009,7 @@ const printSummary = async ({ availableKeys, dryRun }) => {
             (sum, children) => sum + children.length,
             0,
           ),
+        catalogProducts: new Set(productSeeds.map(catalogEPIDFor)).size,
         products: productSeeds.length,
         coupons: couponSeeds.length,
       }
@@ -967,6 +1021,7 @@ const printSummary = async ({ availableKeys, dryRun }) => {
   console.log(`Users:           ${counts.users}`);
   console.log(`Seller profiles: ${counts.sellerProfiles}`);
   console.log(`Categories:      ${counts.categories}`);
+  console.log(`CatalogProducts: ${counts.catalogProducts}`);
   console.log(`Products:        ${counts.products}`);
   console.log(`Coupons:         ${counts.coupons}`);
   console.log('');
@@ -987,18 +1042,24 @@ const seedCatalog = async () => {
   ensureDevelopmentEnvironment();
   await connectDatabase();
 
-  const availableKeys = await listProductImageKeys();
-  validateImageMapping(availableKeys);
-
   if (isDryRun) {
-    await printSummary({ availableKeys, dryRun: true });
+    await printSummary({ availableKeys: expectedImageKeys(), dryRun: true });
     return;
   }
+
+  const availableKeys = await listProductImageKeys();
+  validateImageMapping(availableKeys);
 
   const users = await upsertUsers();
   const sellers = await upsertSellerProfiles(users);
   const categoryBySlug = await upsertCategories();
-  await upsertProducts({ categoryBySlug, sellers, availableKeys });
+  const catalogByEPID = await upsertCatalogProducts({ categoryBySlug });
+  await upsertProducts({
+    categoryBySlug,
+    sellers,
+    availableKeys,
+    catalogByEPID,
+  });
   await upsertCoupons();
   await printSummary({ availableKeys, dryRun: false });
 };

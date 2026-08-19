@@ -30,9 +30,11 @@ export const detail = async (productUuid) => {
   if (!product)
     throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Product not found');
   // Reviews reference the internal ObjectId — resolve the public uuid first.
-  const internalId = await repository.resolveIdByUuid(productUuid);
+  const catalogProductId = product.catalogProduct?.id;
   return {
     ...product,
-    recentReviews: await reviewRepository.recent(internalId, 5),
+    recentReviews: catalogProductId
+      ? await reviewRepository.recentByCatalogProduct(catalogProductId, 5)
+      : [],
   };
 };

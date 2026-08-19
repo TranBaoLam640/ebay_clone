@@ -26,6 +26,23 @@ export const verifyDeliveredProductPurchase = async ({
   return { order, sellerId: order.sellerId };
 };
 
+export const verifyDeliveredOrderItemPurchase = async ({
+  buyerId,
+  orderId,
+  orderItemId,
+}) => {
+  const order = await orderRepository.findDeliveredOrderItemPurchase({
+    buyerId,
+    orderId,
+    orderItemId,
+  });
+  const item = order?.items?.[0];
+  if (!item || String(item.sellerId) !== String(order.sellerId)) {
+    throw forbidden('The order item is not a delivered purchase');
+  }
+  return { order, sellerId: order.sellerId };
+};
+
 export const verifyDeliveredSellerOrder = async ({
   buyerId,
   orderId,

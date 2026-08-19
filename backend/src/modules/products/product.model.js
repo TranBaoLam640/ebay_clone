@@ -133,6 +133,10 @@ const schema = new mongoose.Schema(
       ref: 'Category',
       required: true,
     },
+    catalogProductId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CatalogProduct',
+    },
     title: { type: String, required: true, trim: true },
     description: { type: String, required: true, trim: true },
     price: { type: Number, required: true, min: 0, validate: Number.isInteger },
@@ -199,6 +203,7 @@ schema.pre('validate', function () {
 schema.index({ status: 1, categoryId: 1, price: 1 });
 schema.index({ status: 1, sellerId: 1, createdAt: -1 });
 schema.index({ status: 1, createdAt: -1 });
+schema.index({ catalogProductId: 1 });
 schema.index({ title: 'text', description: 'text' });
 // Sweep: efficiently find OPEN auctions whose end time has passed.
 schema.index({ listingType: 1, 'auction.status': 1, 'auction.endsAt': 1 });

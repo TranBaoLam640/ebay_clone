@@ -6,6 +6,7 @@ import { userPaths } from './paths/users.paths.js';
 import { addressPaths } from './paths/addresses.paths.js';
 import { notificationPaths } from './paths/notifications.paths.js';
 import { categoryPaths } from './paths/categories.paths.js';
+import { catalogProductPaths } from './paths/catalog-products.paths.js';
 import { productPaths } from './paths/products.paths.js';
 import { sellerPaths } from './paths/sellers.paths.js';
 import { productReviewPaths } from './paths/product-reviews.paths.js';
@@ -28,6 +29,7 @@ const pathGroups = [
   addressPaths,
   notificationPaths,
   categoryPaths,
+  catalogProductPaths,
   productPaths,
   sellerPaths,
   productReviewPaths,

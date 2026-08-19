@@ -43,6 +43,17 @@ export function SellerFeedbackForm({
   const [shippingTimeRating, setShippingTimeRating] = useState(0);
   const [shippingAndHandlingChargesRating, setShippingAndHandlingChargesRating] = useState(0);
   const [images, setImages] = useState<File[]>([]);
+  const [submitted, setSubmitted] = useState(false);
+
+  const requiresDetailedRatings = mode === 'create';
+  const missingDetailedRatings =
+    requiresDetailedRatings &&
+    [
+      itemAsDescribedRating,
+      communicationRating,
+      shippingTimeRating,
+      shippingAndHandlingChargesRating,
+    ].some((rating) => rating === 0);
 
   useEffect(() => {
     if (!initialValue) return;
@@ -56,6 +67,8 @@ export function SellerFeedbackForm({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    setSubmitted(true);
+    if (missingDetailedRatings) return;
     const payload: SellerFeedbackValue = {
       commentType,
       commentText: commentText.trim() || undefined,
@@ -104,21 +117,29 @@ export function SellerFeedbackForm({
           label={t('sellerFeedback.itemAsDescribed')}
           value={itemAsDescribedRating}
           onChange={setItemAsDescribedRating}
+          required={requiresDetailedRatings}
+          showError={submitted && itemAsDescribedRating === 0}
         />
         <DsrField
           label={t('sellerFeedback.communication')}
           value={communicationRating}
           onChange={setCommunicationRating}
+          required={requiresDetailedRatings}
+          showError={submitted && communicationRating === 0}
         />
         <DsrField
           label={t('sellerFeedback.shippingTime')}
           value={shippingTimeRating}
           onChange={setShippingTimeRating}
+          required={requiresDetailedRatings}
+          showError={submitted && shippingTimeRating === 0}
         />
         <DsrField
           label={t('sellerFeedback.shippingAndHandlingCharges')}
           value={shippingAndHandlingChargesRating}
           onChange={setShippingAndHandlingChargesRating}
+          required={requiresDetailedRatings}
+          showError={submitted && shippingAndHandlingChargesRating === 0}
         />
       </div>
 
@@ -130,7 +151,7 @@ export function SellerFeedbackForm({
         <Button type="button" variant="ghost" onClick={onCancel}>
           {t('sellerFeedback.cancel')}
         </Button>
-        <Button type="submit" loading={submitting}>
+        <Button type="submit" loading={submitting} disabled={submitting}>
           {t(`sellerFeedback.${mode === 'create' ? 'submit' : 'saveFeedback'}`)}
         </Button>
       </div>
@@ -142,15 +163,25 @@ function DsrField({
   label,
   value,
   onChange,
+  required,
+  showError,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
+  required?: boolean;
+  showError?: boolean;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-sm font-medium text-text">{label}</span>
+      <span className="text-sm font-medium text-text">
+        {label}
+        {required && <span className="text-danger"> *</span>}
+      </span>
       <RatingInput value={value} onChange={onChange} size={22} />
+      {showError && <span className="text-xs text-danger">{t('sellerFeedback.ratingRequired')}</span>}
     </div>
   );
 }

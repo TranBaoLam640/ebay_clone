@@ -1,1 +1,9 @@
 .history/
+
+# Local environment files may contain credentials.
+.env
+.env.*
+!.env.example
+
+# Local development MongoDB replica-set data.
+.local-mongodb/

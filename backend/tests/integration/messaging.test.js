@@ -16,7 +16,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
 const prefix = '/api/v1';
 const password = 'Strong1!Password';
-const { s3Send } = vi.hoisted(() => ({ s3Send: vi.fn() }));
+const { storageSend } = vi.hoisted(() => ({ storageSend: vi.fn() }));
 let app;
 let database;
 let mongo;
@@ -29,9 +29,9 @@ let ioServer;
 let baseUrl;
 const sockets = new Set();
 
-vi.mock('../../src/modules/uploads/s3-client.js', () => ({
+vi.mock('../../src/modules/uploads/storage-client.js', () => ({
   isStorageConfigured: true,
-  s3Client: { send: s3Send },
+  storageClient: { send: storageSend },
   publicBaseUrl: 'https://cdn.example.test/sbay',
 }));
 
@@ -165,7 +165,10 @@ const seed = async () => {
 };
 
 beforeAll(async () => {
-  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+  mongo = await MongoMemoryReplSet.create({
+    replSet: { count: 1 },
+    instanceOpts: [{ launchTimeout: 120000 }],
+  });
   process.env.MONGODB_URI = mongo.getUri();
   process.env.EMAIL_FROM = 'no-reply@example.test';
   database = await import('../../src/config/database.js');
@@ -183,6 +186,10 @@ beforeAll(async () => {
     ).SellerProfile,
     Product: (await import('../../src/modules/products/product.model.js'))
       .Product,
+    Cart: (await import('../../src/modules/carts/cart.model.js')).Cart,
+    Conversation: (
+      await import('../../src/modules/conversations/conversation.model.js')
+    ).Conversation,
     Address: (await import('../../src/modules/addresses/address.model.js'))
       .Address,
     Order: (await import('../../src/modules/orders/order.model.js')).Order,
@@ -201,7 +208,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  s3Send.mockResolvedValue({});
+  storageSend.mockResolvedValue({});
   vi.spyOn(emailService, 'sendMessageCopy').mockResolvedValue(true);
   await Promise.all(
     Object.values(mongoose.connection.collections).map((collection) =>
@@ -214,10 +221,10 @@ beforeEach(async () => {
 afterAll(async () => {
   vi.restoreAllMocks();
   for (const socket of sockets) socket.disconnect();
-  ioServer.close();
-  await new Promise((resolve) => httpServer.close(resolve));
-  await database.disconnectDatabase();
-  await mongo.stop();
+  ioServer?.close();
+  if (httpServer) await new Promise((resolve) => httpServer.close(resolve));
+  if (database) await database.disconnectDatabase();
+  if (mongo) await mongo.stop();
 });
 
 const createConversation = async (buyer) =>
@@ -284,11 +291,36 @@ describe('buyer/seller messaging', () => {
       productId: ids.productUuid,
     });
     expect(first.status).toBe(201);
+    expect(first.body.data.seller).toEqual(
+      expect.objectContaining({
+        displayName: 'Seller Store',
+        username: 'seller',
+        email: 'seller@example.test',
+      }),
+    );
     const second = await mutate(buyer.agent, 'post', '/conversations', {
       productId: ids.productUuid,
     });
     expect(second.status).toBe(201);
     expect(second.body.data.id).toBe(first.body.data.id);
+
+    await models.Conversation.create({
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      productId: ids.product,
+      type: 'POST_PURCHASE',
+      orderId: ids.order,
+      lastMessageAt: new Date(Date.now() + 1000),
+    });
+    const inbox = await buyer.agent.get(`${prefix}/conversations`).expect(200);
+    expect(
+      inbox.body.data.filter(
+        (item) =>
+          item.buyer.id === String(ids.buyer) &&
+          item.seller.id === String(ids.seller) &&
+          item.product.id === ids.productUuid,
+      ),
+    ).toHaveLength(1);
 
     const other = await login('other@example.test');
     await other.agent
@@ -333,6 +365,18 @@ describe('buyer/seller messaging', () => {
       'Is it available?',
       'Yes, it is.',
     ]);
+    expect(history.body.data.map((message) => message.sender)).toEqual([
+      expect.objectContaining({
+        id: String(ids.buyer),
+        displayName: 'Buyer',
+        username: 'buyer',
+      }),
+      expect.objectContaining({
+        id: String(ids.sellerUser),
+        displayName: 'Seller Owner',
+        username: 'seller',
+      }),
+    ]);
   });
 
   it('delivers buyer and seller messages through Socket.IO without duplicate history rows', async () => {
@@ -361,6 +405,12 @@ describe('buyer/seller messaging', () => {
       expect.objectContaining({
         content: 'Realtime hello',
         clientMessageId: 'client-1',
+        senderId: String(ids.buyer),
+        sender: expect.objectContaining({
+          id: String(ids.buyer),
+          displayName: 'Buyer',
+          username: 'buyer',
+        }),
       }),
     );
     const duplicate = await mutate(
@@ -446,6 +496,152 @@ describe('buyer/seller messaging', () => {
     ]);
   });
 
+  it('enforces monotonic counteroffer price rules server-side', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+
+    const createBuyerOffer = (price) =>
+      mutate(buyer.agent, 'post', `/conversations/${conversation.id}/offers`, {
+        price,
+      }).then((response) => {
+        expect(response.status).toBe(201);
+        return response.body.data;
+      });
+
+    const invalidSellerCounter = async (price) => {
+      const offer = await createBuyerOffer(60000);
+      const response = await mutate(
+        seller.agent,
+        'post',
+        `/offers/${offer.id}/counter`,
+        { price },
+      );
+      expect(response.status).toBe(409);
+      await models.Offer.updateOne(
+        { _id: offer.id },
+        { $set: { status: 'WITHDRAWN' } },
+      );
+    };
+
+    await invalidSellerCounter(60000);
+    await invalidSellerCounter(50000);
+    await invalidSellerCounter(100000);
+
+    const acceptedSellerCounter = await createBuyerOffer(60000).then((offer) =>
+      mutate(seller.agent, 'post', `/offers/${offer.id}/counter`, {
+        price: 70000,
+      }),
+    );
+    expect(acceptedSellerCounter.status).toBe(201);
+    await models.Offer.updateOne(
+      { _id: acceptedSellerCounter.body.data.id },
+      { $set: { status: 'WITHDRAWN' } },
+    );
+
+    const chainForBuyerFail = async () => {
+      const offer = await createBuyerOffer(60000);
+      return mutate(seller.agent, 'post', `/offers/${offer.id}/counter`, {
+        price: 80000,
+      }).then((response) => {
+        expect(response.status).toBe(201);
+        return response.body.data;
+      });
+    };
+
+    for (const price of [59000, 60000, 80000]) {
+      const sellerCounter = await chainForBuyerFail();
+      const response = await mutate(
+        buyer.agent,
+        'post',
+        `/offers/${sellerCounter.id}/counter`,
+        { price },
+      );
+      expect(response.status).toBe(409);
+      await models.Offer.updateOne(
+        { _id: sellerCounter.id },
+        { $set: { status: 'WITHDRAWN' } },
+      );
+    }
+
+    const sellerCounter = await chainForBuyerFail();
+    const acceptedBuyerCounter = await mutate(
+      buyer.agent,
+      'post',
+      `/offers/${sellerCounter.id}/counter`,
+      {
+        price: 70000,
+      },
+    );
+    expect(acceptedBuyerCounter.status).toBe(201);
+  }, 90000);
+
+  it('enforces offer quantity and seller counter quantity bounds', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    await models.Product.updateOne({ _id: ids.product }, { stock: 5 });
+
+    for (const quantity of [1, 3, 5]) {
+      const response = await mutate(
+        buyer.agent,
+        'post',
+        `/conversations/${conversation.id}/offers`,
+        { price: 60000, quantity },
+      );
+      expect(response.status).toBe(201);
+      expect(response.body.data.quantity).toBe(quantity);
+      await models.Offer.updateOne(
+        { _id: response.body.data.id },
+        { $set: { status: 'WITHDRAWN' } },
+      );
+    }
+
+    for (const quantity of [0, 6, 1.5]) {
+      const response = await mutate(
+        buyer.agent,
+        'post',
+        `/conversations/${conversation.id}/offers`,
+        { price: 60000, quantity },
+      );
+      expect([400, 409]).toContain(response.status);
+    }
+
+    const buyerOffer = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 60000, quantity: 3 },
+    ).then((response) => response.body.data);
+
+    const sellerQuantity2 = await mutate(
+      seller.agent,
+      'post',
+      `/offers/${buyerOffer.id}/counter`,
+      { price: 70000, quantity: 2 },
+    );
+    expect(sellerQuantity2.status).toBe(201);
+    expect(sellerQuantity2.body.data.quantity).toBe(2);
+    await models.Offer.updateOne(
+      { _id: sellerQuantity2.body.data.id },
+      { $set: { status: 'WITHDRAWN' } },
+    );
+
+    const buyerOffer2 = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 60000, quantity: 3 },
+    ).then((response) => response.body.data);
+    const sellerQuantity4 = await mutate(
+      seller.agent,
+      'post',
+      `/offers/${buyerOffer2.id}/counter`,
+      { price: 70000, quantity: 4 },
+    );
+    expect(sellerQuantity4.status).toBe(409);
+  }, 90000);
+
   it('declines offers and rejects resolved or expired offer actions', async () => {
     const buyer = await login('buyer@example.test');
     const seller = await login('seller@example.test');
@@ -495,7 +691,142 @@ describe('buyer/seller messaging', () => {
     expect(acceptExpired.status).toBe(409);
   });
 
-  it('upgrades pre-purchase conversation to post-purchase, preserves history, and blocks new offers', async () => {
+  it('lets only the pending proposal sender retract and emits offer updates', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const sellerSocket = connectAs(seller);
+    await waitFor(sellerSocket, 'connect');
+    await new Promise((resolve) =>
+      sellerSocket.emit('conversation:join', conversation.id, resolve),
+    );
+
+    const offer = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      {
+        price: 78000,
+      },
+    ).then((response) => response.body.data);
+    const recipientRetract = await mutate(
+      seller.agent,
+      'post',
+      `/offers/${offer.id}/retract`,
+    );
+    expect(recipientRetract.status).toBe(403);
+
+    const offerUpdated = waitFor(sellerSocket, 'offer:updated');
+    const retracted = await mutate(
+      buyer.agent,
+      'post',
+      `/offers/${offer.id}/retract`,
+    );
+    expect(retracted.status).toBe(200);
+    expect(retracted.body.data).toEqual(
+      expect.objectContaining({
+        id: offer.id,
+        conversationId: conversation.id,
+        amount: 78000,
+        offerPrice: 78000,
+        status: 'WITHDRAWN',
+      }),
+    );
+    await expect(offerUpdated).resolves.toEqual(
+      expect.objectContaining({
+        id: offer.id,
+        conversationId: conversation.id,
+        status: 'WITHDRAWN',
+      }),
+    );
+
+    const acceptRetracted = await mutate(
+      seller.agent,
+      'post',
+      `/offers/${offer.id}/accept`,
+    );
+    expect(acceptRetracted.status).toBe(409);
+    const persisted = await models.Offer.findById(offer.id).lean();
+    expect(persisted.amount).toBe(78000);
+    expect(persisted.status).toBe('WITHDRAWN');
+
+    sellerSocket.disconnect();
+  });
+
+  it('retracts pending counteroffers without reactivating parent offers', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+
+    const offer = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      {
+        price: 80000,
+      },
+    ).then((response) => response.body.data);
+    const sellerCounter = await mutate(
+      seller.agent,
+      'post',
+      `/offers/${offer.id}/counter`,
+      {
+        price: 90000,
+      },
+    ).then((response) => response.body.data);
+    const buyerRetractCounter = await mutate(
+      buyer.agent,
+      'post',
+      `/offers/${sellerCounter.id}/retract`,
+    );
+    expect(buyerRetractCounter.status).toBe(403);
+    const sellerRetractCounter = await mutate(
+      seller.agent,
+      'post',
+      `/offers/${sellerCounter.id}/retract`,
+    );
+    expect(sellerRetractCounter.status).toBe(200);
+    expect(sellerRetractCounter.body.data.status).toBe('WITHDRAWN');
+
+    const offers = await models.Offer.find({ conversationId: conversation.id })
+      .sort({ createdAt: 1 })
+      .lean();
+    expect(offers.map((item) => item.amount)).toEqual([80000, 90000]);
+    expect(offers.map((item) => item.status)).toEqual([
+      'COUNTERED',
+      'WITHDRAWN',
+    ]);
+  });
+
+  it('rejects checkout with a retracted offer', async () => {
+    const buyer = await login('buyer@example.test');
+    const conversation = await createConversation(buyer);
+    const offer = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      {
+        price: 82000,
+      },
+    ).then((response) => response.body.data);
+    const retracted = await mutate(
+      buyer.agent,
+      'post',
+      `/offers/${offer.id}/retract`,
+    );
+    expect(retracted.status).toBe(200);
+    const cartItem = await addCartItem(buyer, ids.productUuid, 1);
+
+    const response = await checkout(buyer, {
+      selectedCartItemIds: [cartItem.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: offer.id,
+    });
+    expect(response.status).toBe(409);
+  });
+
+  it('upgrades pre-purchase conversation to post-purchase, preserves history, and allows a new offer when no active cycle remains', async () => {
     const buyer = await login('buyer@example.test');
     const conversation = await createConversation(buyer);
     await mutate(
@@ -529,7 +860,220 @@ describe('buyer/seller messaging', () => {
         price: 70000,
       },
     );
-    expect(postPurchaseOffer.status).toBe(409);
+    expect(postPurchaseOffer.status).toBe(201);
+    expect(postPurchaseOffer.body.data.conversationId).toBe(conversation.id);
+    expect(postPurchaseOffer.body.data.status).toBe('PENDING');
+  });
+
+  it('blocks a second initial offer while a pending or accepted proposal is active', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+
+    const pending = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 70000 },
+    );
+    expect(pending.status).toBe(201);
+    const secondPending = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 71000 },
+    );
+    expect(secondPending.status).toBe(409);
+
+    await mutate(
+      seller.agent,
+      'post',
+      `/offers/${pending.body.data.id}/accept`,
+    );
+    const secondAccepted = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 72000 },
+    );
+    expect(secondAccepted.status).toBe(409);
+  });
+
+  it('allows a new initial offer after withdrawn, declined, or expired cycles', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+
+    const withdrawn = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 70000 },
+    ).then((response) => response.body.data);
+    await mutate(buyer.agent, 'post', `/offers/${withdrawn.id}/retract`);
+    const afterWithdraw = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 71000 },
+    );
+    expect(afterWithdraw.status).toBe(201);
+
+    await mutate(
+      seller.agent,
+      'post',
+      `/offers/${afterWithdraw.body.data.id}/decline`,
+    );
+    const afterDecline = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 72000 },
+    );
+    expect(afterDecline.status).toBe(201);
+
+    await models.Offer.updateOne(
+      { _id: afterDecline.body.data.id },
+      { $set: { status: 'EXPIRED', expiresAt: new Date(Date.now() - 1000) } },
+    );
+    const afterExpired = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 73000 },
+    );
+    expect(afterExpired.status).toBe(201);
+  });
+
+  it('allows repeat purchased offer cycles in one conversation with independent offer and order records', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    await models.Product.updateOne({ _id: ids.product }, { stock: 10 });
+    const conversation = await createConversation(buyer);
+
+    const purchaseOffer = async (price, quantity = 1) => {
+      const offer = await mutate(
+        buyer.agent,
+        'post',
+        `/conversations/${conversation.id}/offers`,
+        { price, quantity },
+      ).then((response) => {
+        expect(response.status).toBe(201);
+        return response.body.data;
+      });
+      await mutate(seller.agent, 'post', `/offers/${offer.id}/accept`).then(
+        (response) => expect(response.status).toBe(200),
+      );
+      const cartItem = await addCartItem(buyer, ids.productUuid, quantity);
+      const checkoutResponse = await checkout(buyer, {
+        selectedCartItemIds: [cartItem.id],
+        addressId: String(ids.address),
+        paymentMethod: 'COD',
+        offerId: offer.id,
+      });
+      expect(checkoutResponse.status).toBe(201);
+      return {
+        offer,
+        order: checkoutResponse.body.data.orders[0],
+      };
+    };
+
+    const first = await purchaseOffer(70000, 1);
+    const firstPersisted = await models.Offer.findById(first.offer.id).lean();
+    expect(firstPersisted.status).toBe('PURCHASED');
+
+    const reuseFirst = await addCartItem(buyer, ids.productUuid, 1).then(
+      (cartItem) =>
+        checkout(buyer, {
+          selectedCartItemIds: [cartItem.id],
+          addressId: String(ids.address),
+          paymentMethod: 'COD',
+          offerId: first.offer.id,
+        }),
+    );
+    expect(reuseFirst.status).toBe(409);
+    await models.Cart.deleteMany({ userId: ids.buyer });
+
+    const second = await purchaseOffer(72000, 2);
+    expect(second.offer.id).not.toBe(first.offer.id);
+    expect(second.order._id).not.toBe(first.order._id);
+
+    const thirdOffer = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 73000, quantity: 3 },
+    );
+    expect(thirdOffer.status).toBe(201);
+    expect(thirdOffer.body.data.conversationId).toBe(conversation.id);
+
+    const offers = await models.Offer.find({ conversationId: conversation.id })
+      .sort({ createdAt: 1, _id: 1 })
+      .lean();
+    expect(offers.map((offer) => offer.status)).toEqual([
+      'PURCHASED',
+      'PURCHASED',
+      'PENDING',
+    ]);
+    expect(offers.map((offer) => String(offer._id))).toEqual([
+      first.offer.id,
+      second.offer.id,
+      thirdOffer.body.data.id,
+    ]);
+    expect(String(offers[0].orderId)).toBe(first.order._id);
+    expect(String(offers[1].orderId)).toBe(second.order._id);
+    expect(
+      await models.Conversation.countDocuments({
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        productId: ids.product,
+      }),
+    ).toBe(1);
+
+    const history = await buyer.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(history.body.data.filter((message) => message.offer)).toHaveLength(
+      3,
+    );
+  });
+
+  it('rejects a new offer after purchase when the listing is no longer eligible', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    await models.Product.updateOne({ _id: ids.product }, { stock: 5 });
+    const conversation = await createConversation(buyer);
+
+    const offer = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      { price: 70000 },
+    ).then((response) => response.body.data);
+    await mutate(seller.agent, 'post', `/offers/${offer.id}/accept`);
+    const cartItem = await addCartItem(buyer, ids.productUuid, 1);
+    await checkout(buyer, {
+      selectedCartItemIds: [cartItem.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: offer.id,
+    }).then((response) => expect(response.status).toBe(201));
+
+    for (const patch of [
+      { stock: 0 },
+      { stock: 5, offersEnabled: false },
+      { offersEnabled: true, status: 'HIDDEN' },
+      { status: 'ACTIVE', listingType: 'AUCTION' },
+    ]) {
+      await models.Product.updateOne({ _id: ids.product }, { $set: patch });
+      const response = await mutate(
+        buyer.agent,
+        'post',
+        `/conversations/${conversation.id}/offers`,
+        { price: 71000 },
+      );
+      expect(response.status).toBe(409);
+    }
   });
 
   it('emits purchased offer and post-purchase conversation updates after accepted offer checkout', async () => {
@@ -590,6 +1134,73 @@ describe('buyer/seller messaging', () => {
     );
 
     sellerSocket.disconnect();
+  });
+
+  it('checks out accepted multi-quantity offers without creating duplicate conversations', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    await models.Product.updateOne({ _id: ids.product }, { stock: 5 });
+    const conversation = await createConversation(buyer);
+
+    const offer = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/offers`,
+      {
+        price: 80000,
+        quantity: 3,
+      },
+    ).then((response) => {
+      expect(response.status).toBe(201);
+      return response.body.data;
+    });
+    await mutate(seller.agent, 'post', `/offers/${offer.id}/accept`).then(
+      (response) => expect(response.status).toBe(200),
+    );
+
+    const wrongQuantityItem = await addCartItem(buyer, ids.productUuid, 2);
+    await checkout(buyer, {
+      selectedCartItemIds: [wrongQuantityItem.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: offer.id,
+    }).then((response) => expect(response.status).toBe(409));
+
+    await models.Cart.deleteMany({ userId: ids.buyer });
+    const cartItem = await addCartItem(buyer, ids.productUuid, 3);
+    const response = await checkout(buyer, {
+      selectedCartItemIds: [cartItem.id],
+      addressId: String(ids.address),
+      paymentMethod: 'COD',
+      offerId: offer.id,
+    });
+    expect(response.status).toBe(201);
+    const order = response.body.data.orders[0];
+    expect(order.subtotal).toBe(240000);
+    expect(order.items[0]).toEqual(
+      expect.objectContaining({
+        quantity: 3,
+        unitPrice: 80000,
+        itemSubtotal: 240000,
+        offerId: offer.id,
+        finalPrice: 80000,
+      }),
+    );
+
+    const afterPurchase = await mutate(buyer.agent, 'post', '/conversations', {
+      productId: ids.productUuid,
+      orderId: order._id,
+    });
+    expect(afterPurchase.status).toBe(201);
+    expect(afterPurchase.body.data.id).toBe(conversation.id);
+    expect(afterPurchase.body.data.type).toBe('POST_PURCHASE');
+    expect(
+      await models.Conversation.countDocuments({
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        productId: ids.product,
+      }),
+    ).toBe(1);
   });
 
   it('only sends message copy email when requested and uses authenticated user email', async () => {

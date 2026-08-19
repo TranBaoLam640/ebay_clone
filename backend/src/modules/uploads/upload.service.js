@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { env } from '../../config/env.js';
 import { AppError } from '../../common/errors/app-error.js';
 import { ERROR_CODES } from '../../common/constants/error-codes.js';
-import { s3Client, isStorageConfigured, publicBaseUrl } from './s3-client.js';
+import {
+  storageClient,
+  isStorageConfigured,
+  publicBaseUrl,
+} from './storage-client.js';
 
-/** Map allowed image mime types → file extension for the stored object key. */
+/** Map allowed image mime types to file extensions for stored object keys. */
 const EXTENSION_BY_MIME = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -45,7 +49,7 @@ const extensionOf = (name = '') => name.split('.').pop()?.toLowerCase() || '';
  * public URL. `folder` scopes the key (e.g. 'avatars', 'products').
  */
 export const uploadImage = async (file, folder) => {
-  if (!isStorageConfigured || !s3Client)
+  if (!isStorageConfigured || !storageClient)
     throw new AppError(
       503,
       ERROR_CODES.UPLOAD_DISABLED,
@@ -62,14 +66,12 @@ export const uploadImage = async (file, folder) => {
 
   const key = `${folder}/${randomUUID()}.${ext}`;
   try {
-    await s3Client.send(
+    await storageClient.send(
       new PutObjectCommand({
-        Bucket: env.S3_BUCKET,
+        Bucket: env.R2_BUCKET_NAME,
         Key: key,
         Body: file.buffer,
         ContentType: file.mimetype,
-        // Public read is granted by the bucket policy (set once on MinIO), not a
-        // per-object ACL — MinIO ignores/rejects object ACLs in many setups.
       }),
     );
   } catch (error) {
@@ -83,8 +85,19 @@ export const uploadImage = async (file, folder) => {
   return { url: `${publicBaseUrl}/${key}`, key };
 };
 
+export const deleteObject = async (key) => {
+  if (!key || !isStorageConfigured || !storageClient) return false;
+  await storageClient.send(
+    new DeleteObjectCommand({
+      Bucket: env.R2_BUCKET_NAME,
+      Key: key,
+    }),
+  );
+  return true;
+};
+
 export const uploadMessageAttachment = async (file) => {
-  if (!isStorageConfigured || !s3Client)
+  if (!isStorageConfigured || !storageClient)
     throw new AppError(
       503,
       ERROR_CODES.UPLOAD_DISABLED,
@@ -102,7 +115,9 @@ export const uploadMessageAttachment = async (file) => {
 
   const ext = MESSAGE_EXTENSION_BY_MIME[file.mimetype];
   const extensionMatches =
-    !suppliedExt || suppliedExt === ext || (ext === 'jpg' && suppliedExt === 'jpeg');
+    !suppliedExt ||
+    suppliedExt === ext ||
+    (ext === 'jpg' && suppliedExt === 'jpeg');
   if (!ext || !extensionMatches)
     throw new AppError(
       400,
@@ -112,9 +127,9 @@ export const uploadMessageAttachment = async (file) => {
 
   const key = `messages/${randomUUID()}.${ext}`;
   try {
-    await s3Client.send(
+    await storageClient.send(
       new PutObjectCommand({
-        Bucket: env.S3_BUCKET,
+        Bucket: env.R2_BUCKET_NAME,
         Key: key,
         Body: file.buffer,
         ContentType: file.mimetype,

@@ -13,9 +13,12 @@
     "lint": "eslint . && prettier --check \"src/**/*.js\" \"tests/**/*.js\" \"*.{js,json,md}\"",
     "format": "prettier --write .",
     "seed": "node src/scripts/seed.js",
+    "seed:catalog": "node src/scripts/seed-catalog.js",
     "seed:coupons": "node src/scripts/seed-coupons.js",
+    "seed:catalog-r2": "node src/scripts/seed-catalog-r2.js",
     "db:check": "node src/scripts/check-database.js",
-    "docs:check": "node src/scripts/check-openapi.js"
+    "docs:check": "node src/scripts/check-openapi.js",
+    "feedback:indexes": "node src/scripts/maintain-seller-feedback-indexes.js"
   },
   "engines": {
     "node": ">=20"

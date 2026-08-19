@@ -16,9 +16,8 @@ import { toAddressSnapshot } from '../addresses/address.mapper.js';
  * - `productUuid`: the public product id used to link/review/fetch a product.
  * - `reviewed` (per item): whether this line already has a product review (one
  *   per item), so the UI can disable an already-used review button.
- * - `sellerRated` (per order): whether this order already has seller feedback
- *   (one per order), so the UI can disable an already-used rate-seller button
- *   even after a page reload.
+ * - `sellerFeedbacked` (per item): whether this line already has seller
+ *   feedback. `sellerRated` remains as a legacy per-order convenience flag.
  */
 const enrichItems = async (orders) => {
   const items = orders.flatMap((order) => order.items || []);
@@ -26,18 +25,21 @@ const enrichItems = async (orders) => {
   const productIds = items.map((item) => item.productId);
   const orderItemIds = items.map((item) => item._id);
   const orderIds = orders.map((order) => order._id);
-  const [uuidById, reviewedIds, feedbackedIds] = await Promise.all([
-    productRepository.resolveUuidsByIds(productIds),
-    reviewRepository.reviewedOrderItemIds(orderItemIds),
-    sellerFeedbackRepository.feedbackedOrderIds(orderIds),
-  ]);
+  const [uuidById, reviewedIds, feedbackedItemIds, feedbackedOrderIds] =
+    await Promise.all([
+      productRepository.resolveUuidsByIds(productIds),
+      reviewRepository.reviewedOrderItemIds(orderItemIds),
+      sellerFeedbackRepository.feedbackedOrderItemIds(orderItemIds),
+      sellerFeedbackRepository.feedbackedOrderIds(orderIds),
+    ]);
   return orders.map((order) => ({
     ...order,
-    sellerRated: feedbackedIds.has(String(order._id)),
+    sellerRated: feedbackedOrderIds.has(String(order._id)),
     items: (order.items || []).map((item) => ({
       ...item,
       productUuid: uuidById.get(String(item.productId)) ?? null,
       reviewed: reviewedIds.has(String(item._id)),
+      sellerFeedbacked: feedbackedItemIds.has(String(item._id)),
     })),
   }));
 };
@@ -84,9 +86,12 @@ const paymentDto = (payment) => ({
  */
 export const checkoutOrder = async (buyerId, orderId, input) => {
   const existing = await repository.findOwned(buyerId, orderId);
-  if (!existing) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Order not found');
+  if (!existing)
+    throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Order not found');
   if (existing.checkoutGroupId)
-    return json(await checkoutGroupService.get(buyerId, existing.checkoutGroupId));
+    return json(
+      await checkoutGroupService.get(buyerId, existing.checkoutGroupId),
+    );
   if (existing.orderStatus !== 'PENDING_PAYMENT')
     throw new AppError(
       409,

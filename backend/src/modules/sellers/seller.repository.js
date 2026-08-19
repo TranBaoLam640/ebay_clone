@@ -15,11 +15,24 @@ export const findById = (sellerId, session) =>
     .session(session || null)
     .exec();
 
+export const findByUserId = (userId, session) =>
+  SellerProfile.findOne({ userId })
+    .lean()
+    .session(session || null)
+    .exec();
+
 export const activeById = (sellerId, session) =>
   SellerProfile.findOne({ _id: sellerId, status: 'ACTIVE' })
     .lean()
     .session(session || null)
     .exec();
+
+export const findPublicByIds = async (sellerIds) => {
+  const docs = await SellerProfile.find({ _id: { $in: sellerIds } })
+    .select(publicFields)
+    .lean();
+  return new Map(docs.map((doc) => [String(doc._id), doc]));
+};
 
 export const updateFeedbackAggregate = (sellerId, aggregate, session) =>
   SellerProfile.findByIdAndUpdate(sellerId, aggregate, {

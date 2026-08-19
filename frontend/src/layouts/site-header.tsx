@@ -69,10 +69,32 @@ export function SiteHeader() {
           </div>
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
+          {isAuthenticated && (
+            <Link
+              to={paths.messages}
+              className="hidden h-10 w-10 items-center justify-center rounded-md text-text transition-colors hover:bg-surface-2 md:flex"
+              aria-label={t('header.messages')}
+              title={t('header.messages')}
+            >
+              <Icon variant="icon-mail" size={20} />
+            </Link>
+          )}
+
           {isAuthenticated && <NotificationBell />}
 
           {/* Desktop: hover-preview mini-cart (click opens the full drawer). */}
           <CartMini />
+
+          {isAuthenticated && (
+            <Link
+              to={paths.messages}
+              className="relative flex h-10 w-10 items-center justify-center rounded-md text-text transition-colors hover:bg-surface-2 md:hidden"
+              aria-label={t('header.messages')}
+              title={t('header.messages')}
+            >
+              <Icon variant="icon-mail" size={20} />
+            </Link>
+          )}
 
           {/* Mobile: plain cart button → opens drawer / triggers the FAB popover. */}
           <button
@@ -127,6 +149,9 @@ export function SiteHeader() {
                     </MenuLink>
                     <MenuLink to={paths.account.addresses} icon="icon-map-pin" onClick={() => setMenuOpen(false)}>
                       {t('header.addresses')}
+                    </MenuLink>
+                    <MenuLink to={paths.messages} icon="icon-mail" onClick={() => setMenuOpen(false)}>
+                      {t('header.messages')}
                     </MenuLink>
                     <MenuLink to={paths.account.notifications} icon="icon-bell" onClick={() => setMenuOpen(false)}>
                       {t('header.notifications')}
@@ -218,7 +243,7 @@ function MenuLink({
   onClick,
 }: {
   to: string;
-  icon: 'icon-user' | 'icon-map-pin' | 'icon-bell';
+  icon: 'icon-user' | 'icon-map-pin' | 'icon-mail' | 'icon-bell';
   children: React.ReactNode;
   onClick: () => void;
 }) {

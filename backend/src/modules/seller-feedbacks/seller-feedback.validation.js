@@ -1,22 +1,60 @@
 import { z } from 'zod';
 
 const objectId = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid identifier');
-const rating = z.number().int().min(1).max(5);
-const optionalRating = rating.optional();
-const comment = z.string().trim().max(2000).optional();
+const numericRating = z.coerce.number().int().min(1).max(5);
+const optionalRating = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  numericRating.optional(),
+);
+const commentText = z.string().trim().max(500).optional();
+const legacyComment = z.string().trim().max(2000).optional();
 const emptyBody = z.object({}).strict().default({});
 const feedbackFields = {
-  rating,
-  comment,
+  commentType: z.enum(['POSITIVE', 'NEUTRAL', 'NEGATIVE']).optional(),
+  commentText,
+  rating: optionalRating,
+  comment: legacyComment,
   itemAsDescribedRating: optionalRating,
   communicationRating: optionalRating,
+  shippingTimeRating: optionalRating,
+  shippingAndHandlingChargesRating: optionalRating,
   shippingRating: optionalRating,
 };
 
 export const createSellerFeedbackSchema = z
   .object({
-    body: z.object(feedbackFields).strict(),
+    body: z
+      .object(feedbackFields)
+      .strict()
+      .refine((body) => body.rating !== undefined || body.commentType, {
+        message: 'rating or commentType is required',
+      }),
     params: z.object({ orderId: objectId }).strict(),
+    query: z.object({}).strict(),
+  })
+  .strict();
+
+export const createOrderItemSellerFeedbackSchema = z
+  .object({
+    body: z
+      .object({
+        commentType: z.enum(['POSITIVE', 'NEUTRAL', 'NEGATIVE']),
+        commentText,
+        itemAsDescribedRating: optionalRating,
+        communicationRating: optionalRating,
+        shippingTimeRating: optionalRating,
+        shippingAndHandlingChargesRating: optionalRating,
+      })
+      .strict(),
+    params: z.object({ orderId: objectId, orderItemId: objectId }).strict(),
+    query: z.object({}).strict(),
+  })
+  .strict();
+
+export const getOrderItemSellerFeedbackSchema = z
+  .object({
+    body: emptyBody,
+    params: z.object({ orderId: objectId, orderItemId: objectId }).strict(),
     query: z.object({}).strict(),
   })
   .strict();
@@ -26,15 +64,35 @@ export const updateSellerFeedbackSchema = z
     body: z
       .object({
         rating: optionalRating,
-        comment,
+        commentType: z.enum(['POSITIVE', 'NEUTRAL', 'NEGATIVE']).optional(),
+        commentText,
+        comment: legacyComment,
         itemAsDescribedRating: optionalRating,
         communicationRating: optionalRating,
+        shippingTimeRating: optionalRating,
+        shippingAndHandlingChargesRating: optionalRating,
         shippingRating: optionalRating,
       })
       .strict()
       .refine((body) => Object.keys(body).length > 0, {
         message: 'At least one field is required',
       }),
+    params: z.object({ feedbackId: objectId }).strict(),
+    query: z.object({}).strict(),
+  })
+  .strict();
+
+export const awaitingSellerFeedbackSchema = z
+  .object({
+    body: emptyBody,
+    params: z.object({}).strict(),
+    query: z.object({}).strict(),
+  })
+  .strict();
+
+export const respondToSellerFeedbackSchema = z
+  .object({
+    body: z.object({ commentText: z.string().trim().min(1).max(500) }).strict(),
     params: z.object({ feedbackId: objectId }).strict(),
     query: z.object({}).strict(),
   })

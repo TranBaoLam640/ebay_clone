@@ -9,6 +9,11 @@ const timestamp = {
   example: '2026-07-21T10:30:00.000Z',
 };
 const nullableTimestamp = { ...timestamp, nullable: true };
+const productUuid = {
+  type: 'string',
+  format: 'uuid',
+  example: '11111111-1111-4111-a111-111111111111',
+};
 const rating = { type: 'integer', minimum: 1, maximum: 5, example: 5 };
 const password = {
   type: 'string',
@@ -28,15 +33,36 @@ const addressFields = {
   isDefault: { type: 'boolean', example: true },
 };
 const feedbackFields = {
+  commentType: {
+    type: 'string',
+    enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'],
+    example: 'POSITIVE',
+  },
+  commentText: {
+    type: 'string',
+    maxLength: 500,
+    example: 'Excellent transaction.',
+  },
   rating,
   comment: {
     type: 'string',
     maxLength: 2000,
+    deprecated: true,
     example: 'Excellent transaction.',
   },
   itemAsDescribedRating: rating,
   communicationRating: rating,
-  shippingRating: rating,
+  shippingTimeRating: rating,
+  shippingAndHandlingChargesRating: rating,
+  shippingRating: { ...rating, deprecated: true },
+};
+const feedbackImage = {
+  type: 'object',
+  required: ['key', 'url'],
+  properties: {
+    key: { type: 'string', example: 'seller-feedbacks/image-id.jpg' },
+    url: { type: 'string', format: 'uri' },
+  },
 };
 const sellerSummary = {
   type: 'object',
@@ -215,8 +241,23 @@ export const schemas = {
   CreateSellerFeedbackRequest: {
     type: 'object',
     additionalProperties: false,
-    required: ['rating'],
+    required: ['commentType'],
     properties: feedbackFields,
+  },
+  CreateLegacySellerFeedbackRequest: {
+    type: 'object',
+    additionalProperties: false,
+    properties: feedbackFields,
+    description:
+      'Legacy whole-order route. Prefer the order-item-scoped endpoint.',
+  },
+  SellerFeedbackResponseRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['commentText'],
+    properties: {
+      commentText: { type: 'string', minLength: 1, maxLength: 500 },
+    },
   },
   UpdateSellerFeedbackRequest: {
     type: 'object',
@@ -416,14 +457,102 @@ export const schemas = {
     type: 'object',
     properties: {
       id: objectId,
+      orderId: objectId,
+      orderItemId: objectId,
+      sellerId: objectId,
+      productId: objectId,
+      commentType: {
+        type: 'string',
+        enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'],
+      },
+      commentText: { type: 'string', maxLength: 500 },
       rating,
-      comment: { type: 'string' },
+      comment: { type: 'string', deprecated: true },
       itemAsDescribedRating: rating,
       communicationRating: rating,
-      shippingRating: rating,
+      shippingTimeRating: rating,
+      shippingAndHandlingChargesRating: rating,
+      shippingRating: { ...rating, deprecated: true },
+      images: {
+        type: 'array',
+        maxItems: 5,
+        items: feedbackImage,
+      },
+      sellerResponse: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          commentText: { type: 'string', maxLength: 500 },
+          createdAt: timestamp,
+        },
+      },
       buyer: { type: 'object', properties: { fullName: { type: 'string' } } },
       createdAt: timestamp,
       updatedAt: timestamp,
+    },
+  },
+  SellerFeedbackLookup: {
+    type: 'object',
+    properties: {
+      exists: { type: 'boolean' },
+      feedback: { $ref: '#/components/schemas/SellerFeedback' },
+    },
+  },
+  AwaitingSellerFeedbackItem: {
+    type: 'object',
+    properties: {
+      orderId: objectId,
+      orderItemId: objectId,
+      productId: objectId,
+      sellerId: objectId,
+      quantity: { type: 'integer', minimum: 1 },
+      title: { type: 'string' },
+      image: { type: 'string', nullable: true },
+      unitPrice: { type: 'integer', minimum: 0 },
+      itemSubtotal: { type: 'integer', minimum: 0 },
+      product: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: productUuid,
+          title: { type: 'string' },
+          primaryImage: { type: 'string', format: 'uri', nullable: true },
+        },
+      },
+      seller: sellerSummary,
+      eligibleForSellerFeedback: { type: 'boolean' },
+      feedbackDeadline: timestamp,
+      deliveredAt: nullableTimestamp,
+      createdAt: timestamp,
+    },
+  },
+  SellerFeedbackSummary: {
+    type: 'object',
+    properties: {
+      sellerId: objectId,
+      totalFeedbackCount: { type: 'integer', minimum: 0 },
+      legacyAverageFeedbackRating: {
+        type: 'number',
+        minimum: 0,
+        maximum: 5,
+      },
+      counts: {
+        type: 'object',
+        properties: {
+          POSITIVE: { type: 'integer', minimum: 0 },
+          NEUTRAL: { type: 'integer', minimum: 0 },
+          NEGATIVE: { type: 'integer', minimum: 0 },
+        },
+      },
+      averageDetailedSellerRatings: {
+        type: 'object',
+        properties: {
+          itemAsDescribed: { type: 'number', nullable: true },
+          communication: { type: 'number', nullable: true },
+          shippingTime: { type: 'number', nullable: true },
+          shippingAndHandlingCharges: { type: 'number', nullable: true },
+        },
+      },
     },
   },
   CartSeller: {
@@ -606,6 +735,11 @@ export const schemas = {
       addressId: objectId,
       couponCode: { type: 'string', minLength: 1, example: 'SAVE10' },
       paymentMethod: { type: 'string', enum: ['COD', 'PAYPAL'] },
+      offerId: {
+        ...objectId,
+        description:
+          'Accepted offer to apply to checkout. Requires exactly one selected cart item whose product, seller, and quantity match the offer.',
+      },
     },
   },
   AddressSnapshot: {
@@ -652,6 +786,15 @@ export const schemas = {
       total: { type: 'integer', minimum: 0 },
     },
   },
+  CheckoutOfferSummary: {
+    type: 'object',
+    required: ['id', 'originalPrice', 'finalPrice'],
+    properties: {
+      id: objectId,
+      originalPrice: { type: 'integer', minimum: 0 },
+      finalPrice: { type: 'integer', minimum: 0 },
+    },
+  },
   CheckoutPreview: {
     type: 'object',
     required: [
@@ -693,6 +836,10 @@ export const schemas = {
         allOf: [{ $ref: '#/components/schemas/CouponEvaluation' }],
         nullable: true,
       },
+      offer: {
+        allOf: [{ $ref: '#/components/schemas/CheckoutOfferSummary' }],
+        nullable: true,
+      },
     },
   },
   OrderItem: {
@@ -706,6 +853,9 @@ export const schemas = {
       title: { type: 'string' },
       unitPrice: { type: 'integer', minimum: 0 },
       itemSubtotal: { type: 'integer', minimum: 0 },
+      offerId: objectId,
+      originalPrice: { type: 'integer', minimum: 0 },
+      finalPrice: { type: 'integer', minimum: 0 },
     },
   },
   Order: {
@@ -734,6 +884,7 @@ export const schemas = {
       currency: { type: 'string', enum: ['VND'] },
       shippingAddress: { $ref: '#/components/schemas/AddressSnapshot' },
       deliveredAt: timestamp,
+      offerId: objectId,
       items: {
         type: 'array',
         items: { $ref: '#/components/schemas/OrderItem' },
@@ -839,6 +990,246 @@ export const schemas = {
     required: ['checkoutGroupId'],
     properties: { checkoutGroupId: objectId },
   },
+  MessageAttachment: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['url', 'mimeType'],
+    properties: {
+      url: { type: 'string', format: 'uri' },
+      fileName: { type: 'string', maxLength: 255 },
+      mimeType: { type: 'string', maxLength: 120 },
+      size: { type: 'integer', minimum: 0, maximum: 10485760 },
+      type: { type: 'string', enum: ['IMAGE', 'FILE'] },
+    },
+  },
+  Offer: {
+    type: 'object',
+    required: [
+      'id',
+      'conversationId',
+      'productId',
+      'buyerId',
+      'sellerId',
+      'createdBy',
+      'originalPrice',
+      'offerPrice',
+      'amount',
+      'quantity',
+      'status',
+      'parentOfferId',
+      'expiresAt',
+      'createdAt',
+    ],
+    properties: {
+      id: objectId,
+      conversationId: { ...objectId, nullable: true },
+      productId: objectId,
+      buyerId: objectId,
+      sellerId: { ...objectId, nullable: true },
+      createdBy: { ...objectId, nullable: true },
+      originalPrice: { type: 'integer', minimum: 0 },
+      offerPrice: { type: 'integer', minimum: 1 },
+      amount: { type: 'integer', minimum: 1 },
+      quantity: { type: 'integer', minimum: 1, maximum: 999 },
+      message: { type: 'string', maxLength: 500 },
+      status: {
+        type: 'string',
+        enum: [
+          'PENDING',
+          'ACCEPTED',
+          'DECLINED',
+          'COUNTERED',
+          'EXPIRED',
+          'WITHDRAWN',
+          'PURCHASED',
+        ],
+      },
+      parentOfferId: { ...objectId, nullable: true },
+      orderId: { ...objectId, nullable: true },
+      usedAt: nullableTimestamp,
+      expiresAt: timestamp,
+      createdAt: timestamp,
+    },
+  },
+  CreateProductOfferRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['amount'],
+    properties: {
+      amount: { type: 'integer', minimum: 1 },
+      quantity: { type: 'integer', minimum: 1, maximum: 999 },
+      message: { type: 'string', maxLength: 500 },
+    },
+  },
+  ConversationOfferRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['price'],
+    properties: {
+      price: { type: 'integer', minimum: 1 },
+      message: { type: 'string', maxLength: 500 },
+    },
+  },
+  ConversationProductSummary: {
+    type: 'object',
+    required: ['id', 'title', 'image', 'price', 'offersEnabled'],
+    properties: {
+      id: productUuid,
+      title: { type: 'string' },
+      image: { type: 'string', format: 'uri', nullable: true },
+      price: { type: 'integer', minimum: 0 },
+      status: { type: 'string' },
+      offersEnabled: { type: 'boolean' },
+    },
+  },
+  ConversationSellerSummary: {
+    type: 'object',
+    required: ['id', 'displayName', 'avatarUrl', 'feedbackScore'],
+    properties: {
+      id: objectId,
+      displayName: { type: 'string' },
+      username: { type: 'string', nullable: true },
+      email: { type: 'string', format: 'email', nullable: true },
+      avatarUrl: { type: 'string', format: 'uri', nullable: true },
+      feedbackScore: { type: 'integer', minimum: 0 },
+    },
+  },
+  ConversationLastMessage: {
+    type: 'object',
+    required: ['id', 'type', 'content', 'status', 'createdAt'],
+    properties: {
+      id: objectId,
+      type: {
+        type: 'string',
+        enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'SYSTEM'],
+      },
+      content: { type: 'string', nullable: true },
+      status: { type: 'string', enum: ['SENT', 'DELIVERED', 'READ'] },
+      createdAt: timestamp,
+    },
+  },
+  Conversation: {
+    type: 'object',
+    required: [
+      'id',
+      'type',
+      'status',
+      'role',
+      'product',
+      'seller',
+      'orderId',
+      'lastMessage',
+      'unreadCount',
+      'lastMessageAt',
+      'createdAt',
+    ],
+    properties: {
+      id: objectId,
+      type: { type: 'string', enum: ['PRE_PURCHASE', 'POST_PURCHASE'] },
+      status: { type: 'string', enum: ['ACTIVE', 'ARCHIVED'] },
+      role: { type: 'string', enum: ['BUYER', 'SELLER'] },
+      product: { $ref: '#/components/schemas/ConversationProductSummary' },
+      seller: { $ref: '#/components/schemas/ConversationSellerSummary' },
+      orderId: { ...objectId, nullable: true },
+      lastMessage: {
+        allOf: [{ $ref: '#/components/schemas/ConversationLastMessage' }],
+        nullable: true,
+      },
+      unreadCount: { type: 'integer', minimum: 0 },
+      lastMessageAt: timestamp,
+      createdAt: timestamp,
+    },
+  },
+  ConversationMessage: {
+    type: 'object',
+    required: [
+      'id',
+      'conversationId',
+      'senderId',
+      'type',
+      'content',
+      'attachments',
+      'status',
+      'createdAt',
+    ],
+    properties: {
+      id: objectId,
+      conversationId: objectId,
+      senderId: objectId,
+      sender: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          id: objectId,
+          displayName: { type: 'string' },
+          username: { type: 'string', nullable: true },
+          avatarUrl: { type: 'string', format: 'uri', nullable: true },
+        },
+      },
+      clientMessageId: { type: 'string', maxLength: 100 },
+      type: {
+        type: 'string',
+        enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'SYSTEM'],
+      },
+      content: { type: 'string', nullable: true, maxLength: 4000 },
+      attachments: {
+        type: 'array',
+        maxItems: 5,
+        items: { $ref: '#/components/schemas/MessageAttachment' },
+      },
+      offer: {
+        allOf: [{ $ref: '#/components/schemas/Offer' }],
+        nullable: true,
+      },
+      status: { type: 'string', enum: ['SENT', 'DELIVERED', 'READ'] },
+      createdAt: timestamp,
+    },
+  },
+  CreateConversationRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['productId'],
+    properties: {
+      productId: productUuid,
+      orderId: objectId,
+    },
+  },
+  SendMessageRequest: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['TEXT', 'IMAGE', 'FILE'],
+        default: 'TEXT',
+      },
+      clientMessageId: { type: 'string', maxLength: 100 },
+      content: { type: 'string', maxLength: 4000 },
+      attachments: {
+        type: 'array',
+        maxItems: 5,
+        items: { $ref: '#/components/schemas/MessageAttachment' },
+        default: [],
+      },
+      sendCopyToEmail: { type: 'boolean', default: false },
+    },
+  },
+  AttachmentUploadResponse: {
+    type: 'array',
+    items: { $ref: '#/components/schemas/MessageAttachment' },
+  },
+  ConversationUpdatedEvent: {
+    type: 'object',
+    required: ['id', 'type', 'orderId'],
+    properties: {
+      id: objectId,
+      type: { type: 'string', enum: ['PRE_PURCHASE', 'POST_PURCHASE'] },
+      orderId: { ...objectId, nullable: true },
+      updatedAt: timestamp,
+      lastMessage: { $ref: '#/components/schemas/ConversationMessage' },
+    },
+  },
+  OfferUpdatedEvent: { $ref: '#/components/schemas/Offer' },
   CreateReturnRequest: {
     type: 'object',
     additionalProperties: false,

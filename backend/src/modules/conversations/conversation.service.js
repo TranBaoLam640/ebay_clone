@@ -12,7 +12,8 @@ import * as repo from './conversation.repository.js';
 const forbidden = () =>
   new AppError(403, ERROR_CODES.FORBIDDEN, 'Not conversation participant');
 
-const isId = (a, b) => String(a) === String(b);
+const idValue = (value) => value?._id ?? value;
+const isId = (a, b) => String(idValue(a)) === String(idValue(b));
 
 const roleFor = async (conversation, userId) => {
   if (isId(conversation.buyerId, userId)) return 'BUYER';
@@ -38,15 +39,37 @@ const productSummary = (product) => ({
   image: product?.images?.[0] ?? null,
   price: product?.price,
   status: product?.status,
+  stock: product?.stock ?? 0,
+  listingType: product?.listingType ?? 'FIXED',
   offersEnabled: Boolean(product?.offersEnabled),
 });
+
+const usernameFromEmail = (email) => email?.split('@')[0] ?? null;
 
 const sellerSummary = (seller) => ({
   id: String(seller?._id),
   displayName: seller?.displayName,
+  username: usernameFromEmail(seller?.userId?.email),
+  email: seller?.userId?.email ?? null,
   avatarUrl: seller?.avatarUrl ?? null,
   feedbackScore: seller?.feedbackCount ?? 0,
 });
+
+const buyerSummary = (buyer) => ({
+  id: String(buyer?._id),
+  displayName: buyer?.fullName ?? buyer?.email ?? 'Buyer',
+  avatarUrl: buyer?.avatarUrl ?? null,
+});
+
+const userSummary = (user) => {
+  if (!user) return null;
+  return {
+    id: String(user._id),
+    displayName: user.fullName ?? usernameFromEmail(user.email) ?? 'User',
+    username: usernameFromEmail(user.email),
+    avatarUrl: user.avatarUrl ?? null,
+  };
+};
 
 const toConversationView = (conversation, viewerId) => {
   const isBuyer = isId(conversation.buyerId, viewerId);
@@ -56,6 +79,7 @@ const toConversationView = (conversation, viewerId) => {
     status: conversation.status,
     role: isBuyer ? 'BUYER' : 'SELLER',
     product: productSummary(conversation.productId),
+    buyer: buyerSummary(conversation.buyerId),
     seller: sellerSummary(conversation.sellerId),
     orderId: conversation.orderId ? String(conversation.orderId) : null,
     lastMessage: conversation.lastMessageId
@@ -100,7 +124,12 @@ const toOfferView = (offer) => {
 const toMessageView = (message, offer) => ({
   id: String(message._id),
   conversationId: String(message.conversationId),
-  senderId: String(message.senderId),
+  senderId: String(idValue(message.senderId)),
+  sender: userSummary(
+    typeof message.senderId === 'object' && message.senderId?._id
+      ? message.senderId
+      : null,
+  ),
   clientMessageId: message.clientMessageId ?? undefined,
   type: message.type,
   content: message.content ?? null,
@@ -119,14 +148,26 @@ export const list = async (userId, query) => {
     sellerProfiles.map((seller) => seller._id),
     query,
   );
-  return conversations.map((conversation) =>
-    toConversationView(conversation, userId),
-  );
+  const seen = new Set();
+  return conversations
+    .filter((conversation) => {
+      const key = [
+        idValue(conversation.buyerId),
+        idValue(conversation.sellerId),
+        idValue(conversation.productId),
+      ].join(':');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((conversation) => toConversationView(conversation, userId));
 };
 
 export const createOrGet = async (userId, { productId, orderId }) => {
   const product = await Product.findOne({ uuid: productId })
-    .select('_id uuid title images price status stock sellerId offersEnabled')
+    .select(
+      '_id uuid title images price status stock listingType sellerId offersEnabled',
+    )
     .lean();
   if (!product)
     throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Product not found');
@@ -137,7 +178,9 @@ export const createOrGet = async (userId, { productId, orderId }) => {
       'Cannot contact yourself',
     );
 
-  const seller = await SellerProfile.findById(product.sellerId).lean();
+  const seller = await SellerProfile.findById(product.sellerId)
+    .populate('userId', 'email fullName')
+    .lean();
   if (!seller)
     throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Seller not found');
   if (isId(seller.userId, userId))
@@ -161,35 +204,23 @@ export const createOrGet = async (userId, { productId, orderId }) => {
     type = 'POST_PURCHASE';
   }
 
-  const existing = await repo.findExisting({
+  const existing = await repo.findCanonical({
     buyerId: userId,
     sellerId: product.sellerId,
     productId: product._id,
-    orderId,
-    type,
   });
-  if (existing)
-    return toConversationView(
-      { ...existing, productId: product, sellerId: seller },
-      userId,
-    );
-
-  if (type === 'POST_PURCHASE') {
-    const prePurchase = await repo.findPrePurchase({
-      buyerId: userId,
-      sellerId: product.sellerId,
-      productId: product._id,
-    });
-    if (prePurchase) {
-      const upgraded = await repo.attachOrderContext(
-        prePurchase._id,
-        order._id,
-      );
+  if (existing) {
+    if (order && (!existing.orderId || existing.type !== 'POST_PURCHASE')) {
+      const upgraded = await repo.attachOrderContext(existing._id, order._id);
       return toConversationView(
         { ...upgraded, productId: product, sellerId: seller },
         userId,
       );
     }
+    return toConversationView(
+      { ...existing, productId: product, sellerId: seller },
+      userId,
+    );
   }
 
   const [created] = await repo.create({
@@ -272,15 +303,17 @@ export const sendMessage = async (userId, conversationId, input) => {
     message,
     role === 'BUYER' ? 'SELLER' : 'BUYER',
   );
-  const view = toMessageView(message);
+  const sender = await User.findById(userId)
+    .select('email fullName avatarUrl')
+    .lean();
+  const view = toMessageView({ ...message.toObject(), senderId: sender });
   emitToConversation(conversationId, 'message:new', view);
   emitToConversation(conversationId, 'conversation:updated', {
     id: String(conversationId),
     lastMessage: view,
   });
   if (input.sendCopyToEmail) {
-    const [sender, product, seller] = await Promise.all([
-      User.findById(userId).select('email fullName').lean(),
+    const [product, seller] = await Promise.all([
       Product.findById(conversation.productId).select('title').lean(),
       SellerProfile.findById(conversation.sellerId)
         .select('displayName userId')

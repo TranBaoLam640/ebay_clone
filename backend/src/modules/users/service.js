@@ -4,9 +4,30 @@ import * as notificationService from '../notifications/service.js';
 import { verifyPassword, hashPassword } from '../../common/utils/hash.js';
 import { AppError } from '../../common/errors/app-error.js';
 import { ERROR_CODES } from '../../common/constants/error-codes.js';
-export const getProfile = (id) => repo.findById(id);
+
+const toUserView = (user) => {
+  if (!user) return null;
+  const source = typeof user.toObject === 'function' ? user.toObject() : user;
+  return {
+    id: String(source._id),
+    email: source.email,
+    fullName: source.fullName,
+    phone: source.phone ?? null,
+    avatarUrl: source.avatarUrl ?? null,
+    role: source.role,
+    status: source.status,
+    isEmailVerified: source.isEmailVerified,
+    emailVerifiedAt: source.emailVerifiedAt ?? null,
+    lastLoginAt: source.lastLoginAt ?? null,
+    createdAt: source.createdAt,
+    updatedAt: source.updatedAt,
+  };
+};
+
+export const getProfile = async (id) => toUserView(await repo.findById(id));
 export const getAuthenticatedUser = (id) => repo.findById(id);
-export const updateProfile = (id, data) => repo.updateById(id, data);
+export const updateProfile = async (id, data) =>
+  toUserView(await repo.updateById(id, data));
 export const changePassword = async (id, { currentPassword, newPassword }) => {
   const profile = await repo.findById(id);
   if (!profile)

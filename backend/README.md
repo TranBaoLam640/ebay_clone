@@ -42,7 +42,7 @@ npm run db:check
 npm run seed
 ```
 
-Copy `.env.example` to `.env`. Supported variables are `NODE_ENV`, `PORT`, `API_PREFIX`; `MONGODB_URI` or component-mode `MONGODB_HOST`, `MONGODB_PORT`, `MONGODB_DATABASE`, `MONGODB_USERNAME`, `MONGODB_PASSWORD`, `MONGODB_AUTH_SOURCE`, `MONGODB_REPLICA_SET`, `MONGODB_TLS`, `MONGODB_MAX_POOL_SIZE`, `MONGODB_MIN_POOL_SIZE`, `MONGODB_SERVER_SELECTION_TIMEOUT_MS`; `CLIENT_ORIGIN`, `TRUST_PROXY`; `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`; `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `COOKIE_DOMAIN`; `CSRF_SECRET`; `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SECURE`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`, `EMAIL_VERIFICATION_URL`; `LOG_LEVEL`, `RETURN_WINDOW_DAYS`, and `PAYPAL_SIMULATION_ENABLED`. JWT/CSRF secrets require 32+ characters.
+Copy `.env.example` to `.env`. Supported variables are `NODE_ENV`, `PORT`, `API_PREFIX`; `MONGODB_URI` or component-mode `MONGODB_HOST`, `MONGODB_PORT`, `MONGODB_DATABASE`, `MONGODB_USERNAME`, `MONGODB_PASSWORD`, `MONGODB_AUTH_SOURCE`, `MONGODB_REPLICA_SET`, `MONGODB_TLS`, `MONGODB_MAX_POOL_SIZE`, `MONGODB_MIN_POOL_SIZE`, `MONGODB_SERVER_SELECTION_TIMEOUT_MS`; `CLIENT_ORIGIN`, `TRUST_PROXY`; `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`; `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `COOKIE_DOMAIN`; `CSRF_SECRET`; `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SECURE`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`, `EMAIL_VERIFICATION_URL`; `LOG_LEVEL`, `RETURN_WINDOW_DAYS`, `PAYPAL_SIMULATION_ENABLED`; Cloudflare R2 storage variables `R2_ENDPOINT`, `R2_REGION`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL`; and `UPLOAD_MAX_BYTES`. JWT/CSRF secrets require 32+ characters.
 
 ### Remote MongoDB configuration
 
@@ -84,6 +84,24 @@ Configure SMTP manually in `.env` with `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SECURE
 Registration sends a six-digit email OTP. Submit `{ "email": "buyer@example.com", "otp": "042731" }` to `/api/v1/auth/verify-email`, and `{ "email": "buyer@example.com" }` to `/api/v1/auth/resend-verification`. OTPs expire after `EMAIL_OTP_TTL_MINUTES` (10 minutes by default), allow `EMAIL_OTP_MAX_ATTEMPTS` attempts (5), and can be resent after `EMAIL_OTP_RESEND_COOLDOWN_SECONDS` (60). Only the newest OTP is valid. Raw OTPs are never stored or returned; MongoDB stores only an HMAC-SHA256 hash in the existing `emailverificationtokens` collection.
 
 Tests mock `emailService.sendVerificationEmail` and capture the six-digit OTP from its outbound argument. The API does not return verification OTPs.
+
+## Cloudflare R2 storage
+
+Avatar, product image, and message attachment uploads use Cloudflare R2 through its S3-compatible API. The backend intentionally keeps `@aws-sdk/client-s3`, `S3Client`, and `PutObjectCommand`; an AWS account is not required.
+
+Configure storage in `.env`:
+
+```env
+R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_REGION=auto
+R2_ACCESS_KEY_ID=<secret>
+R2_SECRET_ACCESS_KEY=<secret>
+R2_BUCKET_NAME=sbay-storage
+R2_PUBLIC_URL=https://<public-r2-base-url>
+UPLOAD_MAX_BYTES=5242880
+```
+
+`R2_PUBLIC_URL` controls the URL persisted in MongoDB and returned to the frontend. Use an R2 custom domain or other public R2 base URL that can serve objects from the configured bucket. Never commit real R2 credentials.
 
 ## Scripts
 

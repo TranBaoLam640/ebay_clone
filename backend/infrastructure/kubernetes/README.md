@@ -6,11 +6,13 @@ StatefulSet and Keel for pull-based auto-deploy. Run all commands on the VPS unl
 Path: cloudflare edge → cloudflared (in-cluster) → ingress-nginx → backend Service → pods → MongoDB StatefulSet.
 
 ## 0. Prerequisites (gather first)
+
 - GHCR PAT with `read:packages` (for the private image pull secret + Keel).
 - Cloudflare account + a domain on it + a **Tunnel token** (Zero Trust → Networks → Tunnels → create → copy token).
 - Verify the SOURCE Mongo before migration: `docker exec sbay_db mongod --version` (pin the StatefulSet image major to match) and confirm DB `sbay` has data.
 
 ## 1. Install k3s (Traefik + ServiceLB disabled)
+
 ```bash
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --disable servicelb --write-kubeconfig-mode 644" sh -
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -20,6 +22,7 @@ kubectl top nodes                     # metrics-server bundled → returns data
 ```
 
 ## 2. Platform add-ons (Helm)
+
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo add keel https://charts.keel.sh && helm repo update
@@ -36,6 +39,7 @@ helm install keel keel/keel -n keel --create-namespace \
 ```
 
 ## 3. Namespace + secrets (never committed)
+
 ```bash
 kubectl apply -f namespace.yaml
 
@@ -64,18 +68,22 @@ kubectl -n sbay create secret generic backend-secret \
   --from-literal=CSRF_SECRET='<32+>' \
   --from-literal=EMAIL_USER='<smtp-user>' \
   --from-literal=EMAIL_PASSWORD='<smtp-pass>' \
-  --from-literal=EMAIL_OTP_HMAC_SECRET='<32+ non-placeholder>'
+  --from-literal=EMAIL_OTP_HMAC_SECRET='<32+ non-placeholder>' \
+  --from-literal=R2_ACCESS_KEY_ID='<r2-access-key-id>' \
+  --from-literal=R2_SECRET_ACCESS_KEY='<r2-secret-access-key>'
 
 # Cloudflare tunnel token:
 kubectl -n sbay create secret generic cloudflared-token --from-literal=token='<TUNNEL_TOKEN>'
 ```
 
 ## 4. Edit non-secret config before applying
-- `backend-config.yaml`: set `CLIENT_ORIGIN`, `EMAIL_FROM`, `EMAIL_VERIFICATION_URL` (**https**), and `COOKIE_SAME_SITE` (`none` if the frontend is a different origin than the API, else `lax`).
+
+- `backend-config.yaml`: set `CLIENT_ORIGIN`, `EMAIL_FROM`, `EMAIL_VERIFICATION_URL` (**https**), `COOKIE_SAME_SITE` (`none` if the frontend is a different origin than the API, else `lax`), and Cloudflare R2 public settings (`R2_ENDPOINT`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL`).
 - `backend-ingress.yaml`: set `host:` to your Cloudflare hostname.
 - In the Cloudflare dashboard, route that hostname → `http://ingress-nginx-controller.ingress-nginx.svc:80`.
 
 ## 5. Apply (Mongo BEFORE backend)
+
 ```bash
 kubectl apply -f mongodb-priorityclass.yaml
 kubectl apply -f backend-config.yaml
@@ -93,6 +101,7 @@ kubectl -n sbay rollout status deploy/backend --timeout=5m
 ```
 
 ## 6. Data migration (preserve existing data — Phase 5)
+
 ```bash
 kubectl -n sbay scale deploy/backend --replicas=0            # quiesce
 mongodump --gzip --archive=/tmp/sbay.gz --uri="mongodb://admin:<pw>@127.0.0.1:27017/?authSource=admin&replicaSet=rs0"
@@ -104,6 +113,7 @@ kubectl -n sbay scale deploy/backend --replicas=2
 ```
 
 ## 7. Verify
+
 ```bash
 kubectl -n sbay get deploy,po,svc,ingress,hpa,statefulset
 curl https://<cloudflare-host>/health                       # 200 over public HTTPS, no inbound port
@@ -113,6 +123,7 @@ curl https://<cloudflare-host>/health                       # 200 over public HT
 ```
 
 ## Notes / trade-offs (class-project scope)
+
 - Rate limiting lives ONLY at ingress (app is stateless). nginx limits are coarse per-IP.
 - `:latest` + Keel `force`: simple auto-deploy; for reliable rollback prefer pinning to `:<sha>` digests.
 - local-path PV is node-pinned single copy → back up `/var/lib/rancher/k3s/storage` externally.

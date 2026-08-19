@@ -3,6 +3,7 @@ export type UserStatus = 'PENDING_VERIFICATION' | 'ACTIVE' | 'LOCKED' | 'DISABLE
 
 export interface User {
   id: string;
+  _id?: string;
   email: string;
   fullName: string;
   phone: string | null;

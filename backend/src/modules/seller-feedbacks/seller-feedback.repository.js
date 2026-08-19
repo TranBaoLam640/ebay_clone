@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { SellerFeedback } from './seller-feedback.model.js';
 
-const publicPipeline = () => [
+const publicPipeline = (includeTransaction = false) => [
   {
     $lookup: {
       from: 'users',
@@ -16,11 +16,23 @@ const publicPipeline = () => [
     $project: {
       _id: 0,
       id: '$_id',
+      ...(includeTransaction && {
+        orderId: 1,
+        orderItemId: 1,
+        productId: 1,
+        sellerId: 1,
+      }),
+      commentType: 1,
+      commentText: 1,
+      comment: '$commentText',
       rating: 1,
-      comment: 1,
       itemAsDescribedRating: 1,
       communicationRating: 1,
+      shippingTimeRating: 1,
+      shippingAndHandlingChargesRating: 1,
       shippingRating: 1,
+      images: 1,
+      sellerResponse: 1,
       buyer: { fullName: '$buyer.fullName', avatarUrl: '$buyer.avatarUrl' },
       createdAt: 1,
       updatedAt: 1,
@@ -44,6 +56,12 @@ export const transaction = async (work) => {
 export const create = async (data, session) =>
   (await SellerFeedback.create([data], { session }))[0];
 
+export const findByOrderItem = (orderId, orderItemId, session) =>
+  SellerFeedback.findOne({ orderId, orderItemId })
+    .session(session || null)
+    .lean()
+    .exec();
+
 export const updateOwned = (buyerId, _id, data, session) =>
   SellerFeedback.findOneAndUpdate(
     { buyerId, _id },
@@ -53,6 +71,23 @@ export const updateOwned = (buyerId, _id, data, session) =>
 
 export const deleteOwned = (buyerId, _id, session) =>
   SellerFeedback.findOneAndDelete({ buyerId, _id }, { session });
+
+export const findById = (_id, session) =>
+  SellerFeedback.findById(_id)
+    .session(session || null)
+    .lean()
+    .exec();
+
+export const respondOnce = (_id, sellerId, commentText, session) =>
+  SellerFeedback.findOneAndUpdate(
+    {
+      _id,
+      sellerId,
+      sellerResponse: { $exists: false },
+    },
+    { $set: { sellerResponse: { commentText, createdAt: new Date() } } },
+    { returnDocument: 'after', runValidators: true, session },
+  );
 
 export const aggregateForSeller = async (sellerId, session) => {
   const [result] = await SellerFeedback.aggregate([
@@ -67,7 +102,9 @@ export const aggregateForSeller = async (sellerId, session) => {
     {
       $project: {
         _id: 0,
-        averageFeedbackRating: { $round: ['$averageFeedbackRating', 2] },
+        averageFeedbackRating: {
+          $ifNull: [{ $round: ['$averageFeedbackRating', 2] }, 0],
+        },
         feedbackCount: 1,
       },
     },
@@ -92,7 +129,7 @@ export const listPublic = async (sellerId, { rating, sort, skip, limit }) => {
           { $sort: sorts[sort] || sorts.newest },
           { $skip: skip },
           { $limit: limit },
-          ...publicPipeline(),
+          ...publicPipeline(false),
         ],
         total: [{ $count: 'value' }],
       },
@@ -104,9 +141,82 @@ export const listPublic = async (sellerId, { rating, sort, skip, limit }) => {
 export const toPublic = async (feedback, session) => {
   const [item] = await SellerFeedback.aggregate([
     { $match: { _id: feedback._id } },
-    ...publicPipeline(),
+    ...publicPipeline(true),
   ]).session(session || null);
   return item;
+};
+
+export const summaryForSeller = async (sellerId) => {
+  const [result] = await SellerFeedback.aggregate([
+    { $match: { sellerId: new mongoose.Types.ObjectId(sellerId) } },
+    {
+      $group: {
+        _id: null,
+        totalFeedbackCount: { $sum: 1 },
+        positiveCount: {
+          $sum: { $cond: [{ $eq: ['$commentType', 'POSITIVE'] }, 1, 0] },
+        },
+        neutralCount: {
+          $sum: { $cond: [{ $eq: ['$commentType', 'NEUTRAL'] }, 1, 0] },
+        },
+        negativeCount: {
+          $sum: { $cond: [{ $eq: ['$commentType', 'NEGATIVE'] }, 1, 0] },
+        },
+        itemAsDescribedRating: { $avg: '$itemAsDescribedRating' },
+        communicationRating: { $avg: '$communicationRating' },
+        shippingTimeRating: { $avg: '$shippingTimeRating' },
+        shippingAndHandlingChargesRating: {
+          $avg: '$shippingAndHandlingChargesRating',
+        },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        totalFeedbackCount: 1,
+        counts: {
+          POSITIVE: '$positiveCount',
+          NEUTRAL: '$neutralCount',
+          NEGATIVE: '$negativeCount',
+        },
+        averageDetailedSellerRatings: {
+          itemAsDescribed: {
+            $ifNull: [{ $round: ['$itemAsDescribedRating', 2] }, null],
+          },
+          communication: {
+            $ifNull: [{ $round: ['$communicationRating', 2] }, null],
+          },
+          shippingTime: {
+            $ifNull: [{ $round: ['$shippingTimeRating', 2] }, null],
+          },
+          shippingAndHandlingCharges: {
+            $ifNull: [
+              { $round: ['$shippingAndHandlingChargesRating', 2] },
+              null,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+  return {
+    totalFeedbackCount: result?.totalFeedbackCount || 0,
+    counts: result?.counts || { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 },
+    averageDetailedSellerRatings: result?.averageDetailedSellerRatings || {
+      itemAsDescribed: null,
+      communication: null,
+      shippingTime: null,
+      shippingAndHandlingCharges: null,
+    },
+  };
+};
+
+/** Given a set of order item ids, return the subset that already has seller feedback. */
+export const feedbackedOrderItemIds = async (orderItemIds) => {
+  const docs = await SellerFeedback.find({ orderItemId: { $in: orderItemIds } })
+    .select('orderItemId')
+    .lean();
+  return new Set(docs.map((doc) => String(doc.orderItemId)));
 };
 
 /** Given a set of order ids, return the subset that already has seller feedback. */

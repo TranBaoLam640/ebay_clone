@@ -43,6 +43,12 @@ offerActionRoute.post(
   controller.declineOffer,
 );
 offerActionRoute.post(
+  '/:offerId/retract',
+  authenticate,
+  validate(offerIdSchema),
+  controller.retractOffer,
+);
+offerActionRoute.post(
   '/:offerId/counter',
   authenticate,
   validate(counterOfferSchema),

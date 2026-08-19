@@ -31,6 +31,7 @@ const NAV: { to: string; labelKey: string; icon: IconVariant; end?: boolean }[] 
 const ACCOUNT: { to: string; labelKey: string; icon: IconVariant }[] = [
   { to: paths.account.profile, labelKey: 'header.profile', icon: 'icon-user' },
   { to: paths.orders, labelKey: 'account.navOrders', icon: 'icon-package' },
+  { to: paths.messages, labelKey: 'header.messages', icon: 'icon-mail' },
   { to: paths.account.addresses, labelKey: 'header.addresses', icon: 'icon-map-pin' },
   { to: paths.account.notifications, labelKey: 'header.notifications', icon: 'icon-bell' },
 ];

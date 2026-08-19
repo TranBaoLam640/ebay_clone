@@ -22,7 +22,11 @@ export const info = {
 
 ## Covered endpoint groups
 
-The document includes health/readiness, authentication, current user profile, addresses, notifications, categories, buyer product catalog, public seller detail, product reviews, seller feedback, Cart, Coupon validation, Checkout Preview and final Checkout, CheckoutGroup detail, Order reads, PayPal/COD payment actions, and Buyer Returns.`,
+The document includes health/readiness, authentication, current user profile, addresses, notifications, categories, buyer product catalog, public seller detail, product reviews, seller feedback, Cart, Coupon validation, Checkout Preview and final Checkout, CheckoutGroup detail, Order reads, PayPal/COD payment actions, Buyer Returns, buyer/seller Messaging, Offers, attachments, and accepted-offer checkout payloads.
+
+## Realtime messaging events
+
+Socket.IO runs on the default \`/socket.io/\` path with the same access cookie authentication as protected REST APIs. Clients join authorized rooms with \`conversation:join\` using a conversation id. Event payload schemas are documented under components as \`ConversationMessage\`, \`OfferUpdatedEvent\`, and \`ConversationUpdatedEvent\`. Accepted-offer checkout emits \`offer:updated\` with a PURCHASED offer and \`conversation:updated\` with POST_PURCHASE and orderId only after the checkout transaction commits.`,
 };
 
 export const tags = [
@@ -43,4 +47,6 @@ export const tags = [
   'Orders',
   'Payments',
   'Returns',
+  'Messaging',
+  'Offers',
 ].map((name) => ({ name }));

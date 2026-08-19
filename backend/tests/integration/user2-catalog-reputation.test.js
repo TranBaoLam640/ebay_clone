@@ -13,12 +13,19 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
 const prefix = '/api/v1';
 const password = 'Strong1!Password';
+const { storageSend } = vi.hoisted(() => ({ storageSend: vi.fn() }));
 let app;
 let database;
 let mongo;
 let passwordHash;
 let models;
 let ids;
+
+vi.mock('../../src/modules/uploads/storage-client.js', () => ({
+  isStorageConfigured: true,
+  storageClient: { send: storageSend },
+  publicBaseUrl: 'https://cdn.example.test/sbay',
+}));
 
 const csrf = async (agent) =>
   (await agent.get(`${prefix}/auth/csrf-token`).expect(200)).body.data
@@ -31,6 +38,21 @@ const mutate = async (agent, method, path, body) => {
     token,
   );
   return body === undefined ? operation : operation.send(body);
+};
+
+const uploadFeedback = async (agent, orderId, orderItemId, fields, files) => {
+  const token = await csrf(agent);
+  const operation = agent
+    .post(`${prefix}/orders/${orderId}/items/${orderItemId}/seller-feedback`)
+    .set('x-csrf-token', token);
+  for (const [name, value] of Object.entries(fields))
+    operation.field(name, String(value));
+  for (const file of files)
+    operation.attach('images', Buffer.alloc(file.size ?? 32, 'x'), {
+      filename: file.name,
+      contentType: file.mime,
+    });
+  return operation;
 };
 
 const login = async (email) => {
@@ -48,6 +70,16 @@ const reviewInput = (orderId = ids.order, orderItemId = ids.orderItem) => ({
   orderItemId: String(orderItemId),
   rating: 5,
   comment: 'Excellent product',
+});
+
+const feedbackInput = (overrides = {}) => ({
+  commentType: 'POSITIVE',
+  commentText: 'Reliable seller',
+  itemAsDescribedRating: 5,
+  communicationRating: 5,
+  shippingTimeRating: 5,
+  shippingAndHandlingChargesRating: 4,
+  ...overrides,
 });
 
 const seed = async () => {
@@ -339,6 +371,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  storageSend.mockReset();
+  storageSend.mockResolvedValue({});
   await Promise.all(
     Object.values(mongoose.connection.collections).map((collection) =>
       collection.deleteMany({}),
@@ -781,6 +815,10 @@ describe('User 2 catalog and reputation', () => {
     expect(created.status).toBe(201);
     expect(created.body.data).toEqual(
       expect.objectContaining({
+        orderId: String(ids.order),
+        orderItemId: String(ids.orderItem),
+        sellerId: String(ids.seller),
+        productId: String(ids.product),
         rating: 4,
         comment: 'Reliable seller',
         buyer: { fullName: 'Buyer One' },
@@ -819,6 +857,569 @@ describe('User 2 catalog and reputation', () => {
     expect(removed.body.data).toEqual({ deleted: true });
     expect(await models.SellerProfile.findById(ids.seller).lean()).toEqual(
       expect.objectContaining({ averageFeedbackRating: 0, feedbackCount: 0 }),
+    );
+  });
+
+  it('keeps the legacy seller-feedback endpoint safe for single-item and multi-item orders', async () => {
+    const buyer = await login('buyer@example.test');
+    const legacySingle = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/seller-feedback`,
+      { rating: 4, comment: 'Legacy single item' },
+    );
+    expect(legacySingle.status).toBe(201);
+    expect(legacySingle.body.data).toEqual(
+      expect.objectContaining({
+        orderId: String(ids.order),
+        orderItemId: String(ids.orderItem),
+        sellerId: String(ids.seller),
+        productId: String(ids.product),
+      }),
+    );
+
+    const multiOrder = new mongoose.Types.ObjectId();
+    const itemA = new mongoose.Types.ObjectId();
+    const itemB = new mongoose.Types.ObjectId();
+    await models.Order.create({
+      _id: multiOrder,
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      orderStatus: 'DELIVERED',
+      items: [
+        {
+          _id: itemA,
+          productId: ids.product,
+          sellerId: ids.seller,
+          quantity: 1,
+        },
+        {
+          _id: itemB,
+          productId: ids.outOfStockProduct,
+          sellerId: ids.seller,
+          quantity: 1,
+        },
+      ],
+    });
+
+    await mutate(buyer, 'post', `/orders/${multiOrder}/seller-feedback`, {
+      rating: 5,
+      comment: 'Ambiguous legacy order',
+    }).then(({ status, body }) => {
+      expect(status).toBe(400);
+      expect(body.error.message).toBe(
+        'Legacy seller feedback endpoint only supports single-item orders',
+      );
+    });
+    expect(
+      await models.SellerFeedback.countDocuments({ orderId: multiOrder }),
+    ).toBe(0);
+  });
+
+  it('creates seller feedback at order-item grain and derives persisted identities', async () => {
+    const buyer = await login('buyer@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput(),
+    );
+    expect(created.status).toBe(201);
+    expect(created.body.data).toEqual(
+      expect.objectContaining({
+        orderId: String(ids.order),
+        orderItemId: String(ids.orderItem),
+        buyer: { fullName: 'Buyer One' },
+        sellerId: String(ids.seller),
+        productId: String(ids.product),
+        commentType: 'POSITIVE',
+        commentText: 'Reliable seller',
+        comment: 'Reliable seller',
+        itemAsDescribedRating: 5,
+        communicationRating: 5,
+        shippingTimeRating: 5,
+        shippingAndHandlingChargesRating: 4,
+      }),
+    );
+    const stored = await models.SellerFeedback.findById(
+      created.body.data.id,
+    ).lean();
+    expect(stored).toEqual(
+      expect.objectContaining({
+        orderId: ids.order,
+        orderItemId: ids.orderItem,
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        productId: ids.product,
+      }),
+    );
+  });
+
+  it('enforces order-item seller feedback eligibility and validation', async () => {
+    const buyer = await login('buyer@example.test');
+    const other = await login('other@example.test');
+    await mutate(
+      other,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput(),
+    ).then(({ status }) => expect(status).toBe(403));
+
+    const pendingOrder = new mongoose.Types.ObjectId();
+    const pendingItem = new mongoose.Types.ObjectId();
+    await models.Order.create({
+      _id: pendingOrder,
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      orderStatus: 'PENDING_PAYMENT',
+      items: [
+        {
+          _id: pendingItem,
+          productId: ids.product,
+          sellerId: ids.seller,
+          quantity: 1,
+        },
+      ],
+    });
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${pendingOrder}/items/${pendingItem}/seller-feedback`,
+      feedbackInput(),
+    ).then(({ status }) => expect(status).toBe(403));
+
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${new mongoose.Types.ObjectId()}/seller-feedback`,
+      feedbackInput(),
+    ).then(({ status, body }) => {
+      expect(status).toBe(404);
+      expect(body.error.message).toBe('Order item not found');
+    });
+
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.selfOrder}/items/${ids.selfOrderItem}/seller-feedback`,
+      feedbackInput(),
+    ).then(({ status }) => expect(status).toBe(403));
+
+    for (const commentType of ['POSITIVE', 'NEUTRAL', 'NEGATIVE']) {
+      const orderId = new mongoose.Types.ObjectId();
+      const orderItemId = new mongoose.Types.ObjectId();
+      await models.Order.create({
+        _id: orderId,
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        orderStatus: 'DELIVERED',
+        items: [
+          {
+            _id: orderItemId,
+            productId: ids.product,
+            sellerId: ids.seller,
+            quantity: 1,
+          },
+        ],
+      });
+      await mutate(
+        buyer,
+        'post',
+        `/orders/${orderId}/items/${orderItemId}/seller-feedback`,
+        feedbackInput({ commentType }),
+      ).then(({ status }) => expect(status).toBe(201));
+    }
+
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'MIXED' }),
+    ).then(({ status }) => expect(status).toBe(400));
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentText: 'x'.repeat(501) }),
+    ).then(({ status }) => expect(status).toBe(400));
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ itemAsDescribedRating: 0 }),
+    ).then(({ status }) => expect(status).toBe(400));
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ communicationRating: 6 }),
+    ).then(({ status }) => expect(status).toBe(400));
+  });
+
+  it('allows different order items in one order to receive independent seller feedback', async () => {
+    const seller2User = new mongoose.Types.ObjectId();
+    const seller2 = new mongoose.Types.ObjectId();
+    const product2 = new mongoose.Types.ObjectId();
+    const product2Uuid = '99999999-9999-4999-8999-999999999999';
+    const item2 = new mongoose.Types.ObjectId();
+    await models.User.create({
+      _id: seller2User,
+      email: 'seller2@example.test',
+      passwordHash,
+      fullName: 'Seller Two',
+      status: 'ACTIVE',
+      isEmailVerified: true,
+    });
+    await models.SellerProfile.create({
+      _id: seller2,
+      userId: seller2User,
+      displayName: 'Second Shop',
+      status: 'ACTIVE',
+    });
+    await models.Product.create({
+      _id: product2,
+      uuid: product2Uuid,
+      sellerId: seller2,
+      categoryId: ids.category,
+      title: 'Second item',
+      description: 'Another listing',
+      price: 100,
+      stock: 2,
+      status: 'ACTIVE',
+    });
+    await models.Order.findByIdAndUpdate(ids.order, {
+      $push: {
+        items: {
+          _id: item2,
+          productId: product2,
+          sellerId: seller2,
+          quantity: 1,
+        },
+      },
+    });
+
+    const buyer = await login('buyer@example.test');
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'POSITIVE' }),
+    ).then(({ status }) => expect(status).toBe(201));
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${item2}/seller-feedback`,
+      feedbackInput({ commentType: 'NEGATIVE' }),
+    ).then(({ status }) => expect(status).toBe(201));
+
+    const docs = await models.SellerFeedback.find({ orderId: ids.order })
+      .sort({ sellerId: 1 })
+      .lean();
+    expect(docs).toHaveLength(2);
+    expect(docs.map((doc) => String(doc.orderItemId))).toEqual(
+      expect.arrayContaining([String(ids.orderItem), String(item2)]),
+    );
+    expect(
+      docs.find((doc) => String(doc.orderItemId) === String(item2)),
+    ).toEqual(
+      expect.objectContaining({ sellerId: seller2, productId: product2 }),
+    );
+  });
+
+  it('lists awaiting feedback, retrieves order-item feedback, summarizes, and lets the seller respond once', async () => {
+    const buyer = await login('buyer@example.test');
+    let awaiting = await buyer
+      .get(`${prefix}/seller-feedbacks/awaiting`)
+      .expect(200);
+    expect(awaiting.body.data.map((item) => item.orderItemId)).toContain(
+      String(ids.orderItem),
+    );
+
+    const feedback = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'NEUTRAL', shippingTimeRating: 3 }),
+    );
+    expect(feedback.status).toBe(201);
+
+    awaiting = await buyer
+      .get(`${prefix}/seller-feedbacks/awaiting`)
+      .expect(200);
+    expect(awaiting.body.data.map((item) => item.orderItemId)).not.toContain(
+      String(ids.orderItem),
+    );
+
+    await buyer
+      .get(
+        `${prefix}/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      )
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data.exists).toBe(true);
+        expect(body.data.feedback.id).toBe(feedback.body.data.id);
+      });
+
+    await request(app)
+      .get(`${prefix}/sellers/${ids.seller}/feedback-summary`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data.totalFeedbackCount).toBe(1);
+        expect(body.data.counts).toEqual({
+          POSITIVE: 0,
+          NEUTRAL: 1,
+          NEGATIVE: 0,
+        });
+        expect(body.data.averageDetailedSellerRatings).toEqual(
+          expect.objectContaining({ shippingTime: 3 }),
+        );
+      });
+
+    const wrongSeller = await login('inactive-seller@example.test');
+    await mutate(
+      wrongSeller,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/response`,
+      { commentText: 'Thanks' },
+    ).then(({ status }) => expect(status).toBe(403));
+
+    const seller = await login('seller@example.test');
+    const response = await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/response`,
+      { commentText: 'Thanks for the transaction' },
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.data.sellerResponse).toEqual(
+      expect.objectContaining({ commentText: 'Thanks for the transaction' }),
+    );
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/response`,
+      { commentText: 'Second response' },
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Seller response already exists for this feedback',
+      );
+    });
+  });
+
+  it('accepts optional feedback images and deletes them when feedback is removed', async () => {
+    const buyer = await login('buyer@example.test');
+    const created = await uploadFeedback(
+      buyer,
+      ids.order,
+      ids.orderItem,
+      feedbackInput({ communicationRating: 4 }),
+      [
+        { name: 'one.jpg', mime: 'image/jpeg', size: 32 },
+        { name: 'two.png', mime: 'image/png', size: 48 },
+      ],
+    );
+    expect(created.status).toBe(201);
+    expect(created.body.data.images).toHaveLength(2);
+    expect(created.body.data.images[0]).toEqual(
+      expect.objectContaining({
+        key: expect.stringContaining('seller-feedbacks/'),
+        url: expect.stringContaining(
+          'https://cdn.example.test/sbay/seller-feedbacks/',
+        ),
+      }),
+    );
+    const putKeys = storageSend.mock.calls
+      .map(([command]) => command.input)
+      .filter((input) => input.Body)
+      .map((input) => input.Key);
+    expect(putKeys).toHaveLength(2);
+
+    storageSend.mockClear();
+    await mutate(
+      buyer,
+      'delete',
+      `/seller-feedbacks/${created.body.data.id}`,
+    ).then(({ status }) => expect(status).toBe(200));
+    const deleteKeys = storageSend.mock.calls
+      .map(([command]) => command.input)
+      .filter((input) => !input.Body)
+      .map((input) => input.Key);
+    expect(deleteKeys.sort()).toEqual(putKeys.sort());
+    expect(await models.SellerFeedback.countDocuments()).toBe(0);
+  });
+
+  it('cleans up feedback images when upload or duplicate creation fails', async () => {
+    const buyer = await login('buyer@example.test');
+    storageSend
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('r2 down'));
+    const failedUpload = await uploadFeedback(
+      buyer,
+      ids.order,
+      ids.orderItem,
+      feedbackInput(),
+      [
+        { name: 'one.jpg', mime: 'image/jpeg', size: 32 },
+        { name: 'two.jpg', mime: 'image/jpeg', size: 32 },
+      ],
+    );
+    expect(failedUpload.status).toBe(502);
+    expect(await models.SellerFeedback.countDocuments()).toBe(0);
+    expect(
+      storageSend.mock.calls
+        .map(([command]) => command.input)
+        .filter((input) => !input.Body),
+    ).toHaveLength(1);
+
+    storageSend.mockReset();
+    storageSend.mockResolvedValue({});
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput(),
+    ).then(({ status }) => expect(status).toBe(201));
+    storageSend.mockClear();
+    const duplicate = await uploadFeedback(
+      buyer,
+      ids.order,
+      ids.orderItem,
+      feedbackInput({ commentText: 'duplicate with image' }),
+      [{ name: 'duplicate.jpg', mime: 'image/jpeg', size: 32 }],
+    );
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.error.message).toBe(
+      'Seller feedback already exists for this order item',
+    );
+    const duplicateStorageInputs = storageSend.mock.calls.map(
+      ([command]) => command.input,
+    );
+    expect(duplicateStorageInputs.filter((input) => input.Body)).toHaveLength(
+      1,
+    );
+    expect(duplicateStorageInputs.filter((input) => !input.Body)).toHaveLength(
+      1,
+    );
+  });
+
+  it('enforces feedback image count/type limits without uploading invalid requests', async () => {
+    const buyer = await login('buyer@example.test');
+    const tooMany = await uploadFeedback(
+      buyer,
+      ids.order,
+      ids.orderItem,
+      feedbackInput(),
+      Array.from({ length: 6 }, (_, index) => ({
+        name: `image-${index}.jpg`,
+        mime: 'image/jpeg',
+        size: 8,
+      })),
+    );
+    expect(tooMany.status).toBe(400);
+    expect(tooMany.body.error.message).toBe('Too many feedback images');
+
+    const invalidType = await uploadFeedback(
+      buyer,
+      ids.order,
+      ids.orderItem,
+      feedbackInput(),
+      [{ name: 'notes.txt', mime: 'text/plain', size: 8 }],
+    );
+    expect(invalidType.status).toBe(400);
+    expect(invalidType.body.error.message).toBe('Unsupported image type');
+    expect(storageSend).not.toHaveBeenCalled();
+  });
+
+  it('enforces feedback deadline for creation and awaiting feedback', async () => {
+    const buyer = await login('buyer@example.test');
+    const expiredOrder = new mongoose.Types.ObjectId();
+    const expiredItem = new mongoose.Types.ObjectId();
+    await models.Order.create({
+      _id: expiredOrder,
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      orderStatus: 'DELIVERED',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      items: [
+        {
+          _id: expiredItem,
+          productId: ids.product,
+          sellerId: ids.seller,
+          quantity: 1,
+        },
+      ],
+    });
+    await models.Order.updateOne(
+      { _id: expiredOrder },
+      {
+        $set: {
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      },
+    );
+
+    await models.Order.updateOne(
+      { _id: ids.order },
+      { $set: { createdAt: new Date(), updatedAt: new Date() } },
+    );
+    await mutate(
+      buyer,
+      'post',
+      `/orders/${expiredOrder}/items/${expiredItem}/seller-feedback`,
+      feedbackInput(),
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe('Feedback period has expired');
+    });
+
+    await buyer
+      .get(`${prefix}/seller-feedbacks/awaiting`)
+      .expect(200)
+      .then(({ body }) => {
+        expect(body.data.map((item) => item.orderItemId)).toContain(
+          String(ids.orderItem),
+        );
+        expect(body.data.map((item) => item.orderItemId)).not.toContain(
+          String(expiredItem),
+        );
+        expect(body.data[0]).toEqual(
+          expect.objectContaining({ feedbackDeadline: expect.any(String) }),
+        );
+      });
+  });
+
+  it('updates canonical seller feedback fields without image editing', async () => {
+    const buyer = await login('buyer@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ commentType: 'POSITIVE' }),
+    );
+    expect(created.status).toBe(201);
+    const updated = await mutate(
+      buyer,
+      'patch',
+      `/seller-feedbacks/${created.body.data.id}`,
+      {
+        commentType: 'NEGATIVE',
+        commentText: 'Updated transaction feedback',
+        shippingTimeRating: 2,
+        shippingAndHandlingChargesRating: 3,
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.body.data).toEqual(
+      expect.objectContaining({
+        commentType: 'NEGATIVE',
+        commentText: 'Updated transaction feedback',
+        shippingTimeRating: 2,
+        shippingAndHandlingChargesRating: 3,
+        images: [],
+      }),
     );
   });
 
@@ -943,5 +1544,8 @@ describe('User 2 catalog and reputation', () => {
     );
     expect(duplicateFeedback.status).toBe(409);
     expect(duplicateFeedback.body.error.code).toBe('CONFLICT');
+    expect(duplicateFeedback.body.error.message).toBe(
+      'Seller feedback already exists for this order item',
+    );
   });
 });

@@ -6,6 +6,7 @@ import * as conversationService from '../conversations/conversation.service.js';
 import * as conversationRepository from '../conversations/conversation.repository.js';
 import { Product } from '../products/product.model.js';
 import { SellerProfile } from '../sellers/seller-profile.model.js';
+import { User } from '../users/user.model.js';
 import { emitToConversation } from '../../socket/socket.js';
 
 // Best Offer, buyer half: a buyer proposes a price on an offers-enabled FIXED
@@ -13,6 +14,9 @@ import { emitToConversation } from '../../socket/socket.js';
 // Accept/Decline/Counter side is out of scope (needs a seller actor).
 
 const OFFER_TTL_MS = 48 * 60 * 60 * 1000;
+const invalidOffer = (message) =>
+  new AppError(409, ERROR_CODES.CONFLICT, message);
+const isDuplicateKey = (error) => error?.code === 11000;
 
 // Resolve a public product uuid → internal ObjectId, or throw 404.
 const resolveProductId = async (productUuid) => {
@@ -35,6 +39,31 @@ const toOfferView = (offer, product) => ({
   createdAt: offer.createdAt,
 });
 
+const assertQuantityAvailable = (quantity, stock) => {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > stock)
+    throw invalidOffer('Offer quantity must be between 1 and available stock');
+};
+
+const assertInitialOfferPrice = (amount, listingPrice) => {
+  if (!(amount > 0 && amount < listingPrice))
+    throw invalidOffer('Offer price must be lower than the listing price');
+};
+
+const assertNoActiveConversationOffer = async (conversationId, session) => {
+  const active = await offerRepository.findBlockingByConversation(
+    conversationId,
+    session,
+  );
+  if (active?.status === 'ACCEPTED')
+    throw invalidOffer(
+      'Complete checkout for the accepted offer before making another offer',
+    );
+  if (active)
+    throw invalidOffer(
+      'Wait for the current offer to be resolved before making another offer',
+    );
+};
+
 export const createOffer = async ({
   productUuid,
   buyerId,
@@ -52,6 +81,8 @@ export const createOffer = async ({
       ERROR_CODES.OFFERS_NOT_ENABLED,
       'This listing does not accept offers',
     );
+  assertQuantityAvailable(quantity, product.stock ?? 0);
+  assertInitialOfferPrice(amount, product.price);
   const offer = await offerRepository.create({
     productId,
     buyerId,
@@ -104,6 +135,68 @@ const offerView = (offer) => ({
   createdAt: offer.createdAt,
 });
 
+const loadOfferChain = async (offer) => {
+  const chain = [offer];
+  let current = offer;
+  while (current.parentOfferId) {
+    current = await offerRepository.findById(current.parentOfferId);
+    if (!current) break;
+    chain.unshift(current);
+  }
+  return chain;
+};
+
+const previousOfferByCreator = (chain, userId) =>
+  [...chain]
+    .reverse()
+    .find((item) => String(item.createdBy) === String(userId));
+
+const firstOffer = (chain) => chain[0] ?? null;
+
+const validateCounterTerms = async ({ parent, userId, price, quantity }) => {
+  const product = await Product.findById(parent.productId).lean();
+  if (
+    !product ||
+    product.status !== 'ACTIVE' ||
+    product.stock <= 0 ||
+    product.listingType !== 'FIXED' ||
+    !product.offersEnabled
+  )
+    throw invalidOffer('This listing does not accept offers');
+  const nextQuantity = quantity ?? parent.quantity;
+  assertQuantityAvailable(nextQuantity, product.stock);
+  const chain = await loadOfferChain(parent);
+  const previousOwn = previousOfferByCreator(chain.slice(0, -1), userId);
+  const root = firstOffer(chain);
+  const isSeller = String(parent.buyerId) !== String(userId);
+  if (isSeller) {
+    if (nextQuantity > parent.quantity)
+      throw invalidOffer(
+        'Seller counter quantity cannot exceed the buyer requested quantity',
+      );
+    const upper = previousOwn?.amount ?? parent.originalPrice ?? product.price;
+    if (!(price > parent.amount && price < upper))
+      throw invalidOffer(
+        "Counteroffer must be higher than the buyer's current offer and lower than the seller's current asking amount",
+      );
+  } else {
+    const maxQuantity = Math.min(
+      root?.quantity ?? parent.quantity,
+      product.stock,
+    );
+    if (nextQuantity > maxQuantity)
+      throw invalidOffer(
+        'Buyer counter quantity cannot exceed the original requested quantity',
+      );
+    const lower = previousOwn?.amount ?? 0;
+    if (!(price > lower && price < parent.amount))
+      throw invalidOffer(
+        "Counteroffer must be higher than the buyer's previous offer and lower than the seller's current counteroffer",
+      );
+  }
+  return { quantity: nextQuantity, product };
+};
+
 const assertOfferActor = async (offer, userId) => {
   const { conversation, role } = await conversationService.assertParticipant(
     offer.conversationId,
@@ -141,21 +234,37 @@ const createOfferMessage = async ({ conversation, offer, userId, session }) => {
   return message;
 };
 
+const usernameFromEmail = (email) => email?.split('@')[0] ?? null;
+
+const senderView = async (userId) => {
+  const user = await User.findById(userId)
+    .select('email fullName avatarUrl')
+    .lean();
+  if (!user) return null;
+  return {
+    id: String(user._id),
+    displayName: user.fullName ?? usernameFromEmail(user.email) ?? 'User',
+    username: usernameFromEmail(user.email),
+    avatarUrl: user.avatarUrl ?? null,
+  };
+};
+
 export const createConversationOffer = async ({
   conversationId,
   userId,
   price,
+  quantity = 1,
   message,
 }) => {
   const { conversation, role } = await conversationService.assertParticipant(
     conversationId,
     userId,
   );
-  if (conversation.type !== 'PRE_PURCHASE')
+  if (role !== 'BUYER')
     throw new AppError(
-      409,
-      ERROR_CODES.CONFLICT,
-      'Offers are not allowed after purchase',
+      403,
+      ERROR_CODES.FORBIDDEN,
+      'Only the buyer can make the initial offer',
     );
   const product = await Product.findById(conversation.productId).lean();
   if (
@@ -170,6 +279,8 @@ export const createConversationOffer = async ({
       ERROR_CODES.OFFERS_NOT_ENABLED,
       'This listing does not accept offers',
     );
+  assertQuantityAvailable(quantity, product.stock);
+  assertInitialOfferPrice(price, product.price);
   if (role === 'SELLER') {
     const seller = await SellerProfile.findById(conversation.sellerId)
       .select('userId')
@@ -177,8 +288,9 @@ export const createConversationOffer = async ({
     if (!seller || String(seller.userId) !== String(userId))
       throw new AppError(403, ERROR_CODES.FORBIDDEN, 'Not listing seller');
   }
-  const [offer, offerMessage] = await conversationRepository.transaction(
-    async (session) => {
+  const [offer, offerMessage] = await conversationRepository
+    .transaction(async (session) => {
+      await assertNoActiveConversationOffer(conversation._id, session);
       const [created] = await offerRepository.createWithSession(
         {
           conversationId,
@@ -188,7 +300,7 @@ export const createConversationOffer = async ({
           createdBy: userId,
           originalPrice: product.price,
           amount: price,
-          quantity: 1,
+          quantity,
           message,
           status: 'PENDING',
           expiresAt: new Date(Date.now() + OFFER_TTL_MS),
@@ -202,14 +314,22 @@ export const createConversationOffer = async ({
         session,
       });
       return [created, savedMessage];
-    },
-  );
+    })
+    .catch((error) => {
+      if (isDuplicateKey(error))
+        throw invalidOffer(
+          'Wait for the current offer to be resolved before making another offer',
+        );
+      throw error;
+    });
   const payload = offerView(offer);
+  const sender = await senderView(userId);
   emitToConversation(conversationId, 'offer:new', payload);
   emitToConversation(conversationId, 'message:new', {
     id: String(offerMessage._id),
     conversationId,
     senderId: String(userId),
+    sender,
     type: 'OFFER',
     offer: payload,
     status: offerMessage.status,
@@ -223,6 +343,17 @@ export const resolveOffer = async (userId, offerId, status) => {
   if (!offer)
     throw new AppError(404, ERROR_CODES.OFFER_NOT_FOUND, 'Offer not found');
   await assertOfferActor(offer, userId);
+  if (status === 'ACCEPTED') {
+    const product = await Product.findById(offer.productId).lean();
+    if (
+      !product ||
+      product.status !== 'ACTIVE' ||
+      product.stock < offer.quantity ||
+      product.listingType !== 'FIXED' ||
+      !product.offersEnabled
+    )
+      throw invalidOffer('Accepted offer quantity exceeds available stock');
+  }
   const updated = await offerRepository.updatePendingStatus(offerId, status);
   if (!updated)
     throw new AppError(
@@ -235,17 +366,47 @@ export const resolveOffer = async (userId, offerId, status) => {
   return payload;
 };
 
-export const counterOffer = async ({ userId, offerId, price, message }) => {
+export const retractOffer = async (userId, offerId) => {
+  const offer = await offerRepository.findById(offerId);
+  if (!offer)
+    throw new AppError(404, ERROR_CODES.OFFER_NOT_FOUND, 'Offer not found');
+  if (!offer.conversationId || !offer.createdBy)
+    throw new AppError(404, ERROR_CODES.OFFER_NOT_FOUND, 'Offer not found');
+  await conversationService.assertParticipant(offer.conversationId, userId);
+  if (String(offer.createdBy) !== String(userId))
+    throw new AppError(
+      403,
+      ERROR_CODES.FORBIDDEN,
+      'Only the offer sender can retract this offer',
+    );
+  const updated = await offerRepository.retractPendingByCreator(
+    offerId,
+    userId,
+  );
+  if (!updated)
+    throw new AppError(409, ERROR_CODES.CONFLICT, 'Offer is no longer pending');
+  const payload = offerView(updated);
+  emitToConversation(updated.conversationId, 'offer:updated', payload);
+  return payload;
+};
+
+export const counterOffer = async ({
+  userId,
+  offerId,
+  price,
+  quantity,
+  message,
+}) => {
   const parent = await offerRepository.findById(offerId);
   if (!parent)
     throw new AppError(404, ERROR_CODES.OFFER_NOT_FOUND, 'Offer not found');
   const { conversation } = await assertOfferActor(parent, userId);
-  if (conversation.type !== 'PRE_PURCHASE')
-    throw new AppError(
-      409,
-      ERROR_CODES.CONFLICT,
-      'Offers are not allowed after purchase',
-    );
+  const terms = await validateCounterTerms({
+    parent,
+    userId,
+    price,
+    quantity,
+  });
   const [counter, offerMessage] = await conversationRepository.transaction(
     async (session) => {
       const updatedParent = await offerRepository.updatePendingStatus(
@@ -268,7 +429,7 @@ export const counterOffer = async ({ userId, offerId, price, message }) => {
           createdBy: userId,
           originalPrice: parent.originalPrice,
           amount: price,
-          quantity: parent.quantity,
+          quantity: terms.quantity,
           message,
           status: 'PENDING',
           parentOfferId: parent._id,
@@ -290,11 +451,13 @@ export const counterOffer = async ({ userId, offerId, price, message }) => {
     status: 'COUNTERED',
   });
   const payload = offerView(counter);
+  const sender = await senderView(userId);
   emitToConversation(parent.conversationId, 'offer:new', payload);
   emitToConversation(parent.conversationId, 'message:new', {
     id: String(offerMessage._id),
     conversationId: String(parent.conversationId),
     senderId: String(userId),
+    sender,
     type: 'OFFER',
     offer: payload,
     status: offerMessage.status,

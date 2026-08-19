@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getChatSocket } from '../services/chat-socket';
 import type { ConversationMessage, ConversationType, OfferPayload } from '../services/messaging-api';
 
@@ -11,6 +11,7 @@ export interface ConversationUpdatedPayload {
 
 interface ChatSocketHandlers {
   conversationId: string | null;
+  conversationIds: string[];
   onMessage: (message: ConversationMessage) => void;
   onOfferNew: (offer: OfferPayload) => void;
   onOfferUpdated: (offer: OfferPayload) => void;
@@ -22,6 +23,7 @@ interface ChatSocketHandlers {
 
 export function useChatSocket({
   conversationId,
+  conversationIds,
   onMessage,
   onOfferNew,
   onOfferUpdated,
@@ -31,62 +33,95 @@ export function useChatSocket({
   onConversationUpdated,
 }: ChatSocketHandlers) {
   const [connected, setConnected] = useState(false);
-  const joinedRef = useRef<string | null>(null);
-  const socket = getChatSocket();
-
-  useEffect(() => {
-    const onConnect = () => {
-      setConnected(true);
-      if (conversationId) {
-        socket.emit('conversation:join', conversationId);
-        joinedRef.current = conversationId;
-      }
-    };
-    const onDisconnect = () => setConnected(false);
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('message:new', onMessage);
-    socket.on('offer:new', onOfferNew);
-    socket.on('offer:updated', onOfferUpdated);
-    socket.on('message:read', onRead);
-    socket.on('typing:start', onTyping);
-    socket.on('typing:stop', onTypingStop);
-    socket.on('conversation:updated', onConversationUpdated);
-    socket.connect();
-
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('message:new', onMessage);
-      socket.off('offer:new', onOfferNew);
-      socket.off('offer:updated', onOfferUpdated);
-      socket.off('message:read', onRead);
-      socket.off('typing:start', onTyping);
-      socket.off('typing:stop', onTypingStop);
-      socket.off('conversation:updated', onConversationUpdated);
-    };
-  }, [
-    conversationId,
-    onConversationUpdated,
+  const joinedRef = useRef<Set<string>>(new Set());
+  const desiredRef = useRef<Set<string>>(new Set());
+  const handlersRef = useRef({
     onMessage,
     onOfferNew,
     onOfferUpdated,
     onRead,
     onTyping,
     onTypingStop,
-    socket,
-  ]);
+    onConversationUpdated,
+  });
+  const socket = getChatSocket();
+
+  const syncRooms = useCallback(() => {
+    for (const previous of joinedRef.current) {
+      if (!desiredRef.current.has(previous)) {
+        socket.emit('conversation:leave', previous);
+        joinedRef.current.delete(previous);
+      }
+    }
+
+    if (!socket.connected) return;
+
+    for (const id of desiredRef.current) {
+      if (!joinedRef.current.has(id)) {
+        socket.emit('conversation:join', id, (ack?: { ok: boolean }) => {
+          if (ack?.ok) joinedRef.current.add(id);
+        });
+      }
+    }
+  }, [socket]);
 
   useEffect(() => {
-    const previous = joinedRef.current;
-    if (previous && previous !== conversationId) socket.emit('conversation:leave', previous);
-    if (conversationId && previous !== conversationId && socket.connected) {
-      socket.emit('conversation:join', conversationId);
-      joinedRef.current = conversationId;
-    }
-    if (!conversationId) joinedRef.current = null;
-  }, [conversationId, socket]);
+    handlersRef.current = {
+      onMessage,
+      onOfferNew,
+      onOfferUpdated,
+      onRead,
+      onTyping,
+      onTypingStop,
+      onConversationUpdated,
+    };
+  }, [onConversationUpdated, onMessage, onOfferNew, onOfferUpdated, onRead, onTyping, onTypingStop]);
+
+  useEffect(() => {
+    const onConnect = () => {
+      setConnected(true);
+      syncRooms();
+    };
+    const onDisconnect = () => setConnected(false);
+    const handleMessage = (message: ConversationMessage) => handlersRef.current.onMessage(message);
+    const handleOfferNew = (offer: OfferPayload) => handlersRef.current.onOfferNew(offer);
+    const handleOfferUpdated = (offer: OfferPayload) => handlersRef.current.onOfferUpdated(offer);
+    const handleRead = (payload: { conversationId: string; readerId: string }) => handlersRef.current.onRead(payload);
+    const handleTyping = (payload: { conversationId: string; userId: string }) => handlersRef.current.onTyping(payload);
+    const handleTypingStop = (payload: { conversationId: string; userId: string }) => handlersRef.current.onTypingStop(payload);
+    const handleConversationUpdated = (payload: ConversationUpdatedPayload) =>
+      handlersRef.current.onConversationUpdated(payload);
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('message:new', handleMessage);
+    socket.on('offer:new', handleOfferNew);
+    socket.on('offer:updated', handleOfferUpdated);
+    socket.on('message:read', handleRead);
+    socket.on('typing:start', handleTyping);
+    socket.on('typing:stop', handleTypingStop);
+    socket.on('conversation:updated', handleConversationUpdated);
+    socket.connect();
+
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('message:new', handleMessage);
+      socket.off('offer:new', handleOfferNew);
+      socket.off('offer:updated', handleOfferUpdated);
+      socket.off('message:read', handleRead);
+      socket.off('typing:start', handleTyping);
+      socket.off('typing:stop', handleTypingStop);
+      socket.off('conversation:updated', handleConversationUpdated);
+    };
+  }, [socket, syncRooms]);
+
+  useEffect(() => {
+    const desired = new Set(conversationIds);
+    if (conversationId) desired.add(conversationId);
+    desiredRef.current = desired;
+    syncRooms();
+  }, [conversationId, conversationIds, socket, syncRooms]);
 
   const startTyping = () => {
     if (conversationId && socket.connected) socket.emit('typing:start', conversationId);

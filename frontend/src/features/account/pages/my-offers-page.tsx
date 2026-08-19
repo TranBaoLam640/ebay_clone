@@ -12,7 +12,10 @@ import { formatDate } from '@/utils/format-date';
 import type { OfferStatus } from '@/features/product-detail/services/auction-api';
 import { useMyOffers, useWithdrawOffer } from '../hooks/use-my-offers';
 
-const STATUS_TONE: Record<OfferStatus, 'neutral' | 'success' | 'danger' | 'accent'> = {
+const STATUS_TONE: Record<
+  OfferStatus,
+  'neutral' | 'success' | 'danger' | 'accent'
+> = {
   PENDING: 'accent',
   ACCEPTED: 'success',
   DECLINED: 'danger',
@@ -43,7 +46,8 @@ export default function MyOffersPage() {
       </div>
     );
 
-  if (!data || data.length === 0) return <EmptyState title={t('myOffers.empty')} />;
+  if (!data || data.length === 0)
+    return <EmptyState title={t('myOffers.empty')} />;
 
   const statusLabel: Record<OfferStatus, string> = {
     PENDING: t('myOffers.statusPending'),
@@ -55,7 +59,9 @@ export default function MyOffersPage() {
 
   return (
     <div>
-      <h2 className="mb-1 text-xl font-bold text-text">{t('myOffers.title')}</h2>
+      <h2 className="mb-1 text-xl font-bold text-text">
+        {t('myOffers.title')}
+      </h2>
       <p className="mb-5 text-sm text-muted">{t('myOffers.awaitingNote')}</p>
       <ul className="flex flex-col gap-3">
         {data.map((offer) => (
@@ -86,13 +92,30 @@ export default function MyOffersPage() {
               )}
               <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
                 <span>
-                  {t('myOffers.amount')}: <Price cents={offer.amount} className="text-sm" />
+                  {t('myOffers.amount')}:{' '}
+                  <Price cents={offer.amount} className="text-sm" /> each
                 </span>
-                <span>{t('myOffers.expires', { date: formatDate(offer.expiresAt) })}</span>
+                {offer.quantity > 1 && (
+                  <>
+                    <span>Quantity: {offer.quantity}</span>
+                    <span>
+                      Total:{' '}
+                      <Price
+                        cents={offer.amount * offer.quantity}
+                        className="text-sm"
+                      />
+                    </span>
+                  </>
+                )}
+                <span>
+                  {t('myOffers.expires', { date: formatDate(offer.expiresAt) })}
+                </span>
               </div>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-2">
-              <Badge tone={STATUS_TONE[offer.status]}>{statusLabel[offer.status]}</Badge>
+              <Badge tone={STATUS_TONE[offer.status]}>
+                {statusLabel[offer.status]}
+              </Badge>
               {offer.status === 'PENDING' && (
                 <Button
                   size="sm"

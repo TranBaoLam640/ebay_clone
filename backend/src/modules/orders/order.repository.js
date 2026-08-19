@@ -201,6 +201,56 @@ export const findDeliveredProductPurchase = ({
     .lean()
     .exec();
 
+export const findDeliveredOrderItemPurchase = ({
+  buyerId,
+  orderId,
+  orderItemId,
+  session,
+}) =>
+  Order.findOne({
+    _id: orderId,
+    buyerId,
+    orderStatus: 'DELIVERED',
+    items: { $elemMatch: { _id: orderItemId } },
+  })
+    .select({
+      _id: 1,
+      buyerId: 1,
+      sellerId: 1,
+      orderStatus: 1,
+      items: { $elemMatch: { _id: orderItemId } },
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    .session(session || null)
+    .lean()
+    .exec();
+
+export const findOrderItem = ({ orderId, orderItemId, session }) =>
+  Order.findOne({
+    _id: orderId,
+    items: { $elemMatch: { _id: orderItemId } },
+  })
+    .select({
+      _id: 1,
+      buyerId: 1,
+      sellerId: 1,
+      orderStatus: 1,
+      items: { $elemMatch: { _id: orderItemId } },
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    .session(session || null)
+    .lean()
+    .exec();
+
+export const deliveredWithItemsForFeedback = (buyerId) =>
+  Order.find({ buyerId, orderStatus: 'DELIVERED' })
+    .select(publicProjection)
+    .sort({ createdAt: -1, _id: -1 })
+    .lean()
+    .exec();
+
 export const findDeliveredSellerOrder = ({ buyerId, orderId, sellerId }) => {
   const filter = {
     _id: orderId,

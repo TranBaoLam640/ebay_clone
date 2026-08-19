@@ -75,17 +75,14 @@ const schema = z
     // only one pod's atomic OPEN→CLOSED claim wins per auction.
     AUCTION_SWEEP_INTERVAL_MS: positiveInteger(15000),
     PAYPAL_SIMULATION_ENABLED: boolean.default('true'),
-    // S3-compatible object storage (MinIO) for avatar & product image uploads.
-    S3_ENDPOINT: optionalString,
-    S3_REGION: z.string().default('us-east-1'),
-    S3_ACCESS_KEY_ID: optionalString,
-    S3_SECRET_ACCESS_KEY: optionalString,
-    S3_BUCKET: optionalString,
-    // MinIO needs path-style addressing (bucket in the path, not the host).
-    S3_FORCE_PATH_STYLE: boolean.default('true'),
-    // Public base URL used to build stored object URLs. Falls back to
-    // `${S3_ENDPOINT}/${S3_BUCKET}` when not set.
-    S3_PUBLIC_URL: optionalString,
+    // Cloudflare R2 object storage for avatar, product image, and attachment uploads.
+    R2_ENDPOINT: optionalString,
+    R2_REGION: z.string().default('auto'),
+    R2_ACCESS_KEY_ID: optionalString,
+    R2_SECRET_ACCESS_KEY: optionalString,
+    R2_BUCKET_NAME: optionalString,
+    // Public base URL used to build stored object URLs.
+    R2_PUBLIC_URL: optionalString,
     // Max upload size in bytes (default 5 MB).
     UPLOAD_MAX_BYTES: positiveInteger(5 * 1024 * 1024),
   })

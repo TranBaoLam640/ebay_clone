@@ -18,13 +18,14 @@ export const findExisting = ({ buyerId, sellerId, productId, orderId, type }) =>
     ...(type === 'POST_PURCHASE' ? { orderId } : {}),
   }).lean();
 
-export const findPrePurchase = ({ buyerId, sellerId, productId }) =>
+export const findCanonical = ({ buyerId, sellerId, productId }) =>
   Conversation.findOne({
     buyerId,
     sellerId,
     productId,
-    type: 'PRE_PURCHASE',
-  }).lean();
+  })
+    .sort({ lastMessageAt: -1, updatedAt: -1, _id: -1 })
+    .lean();
 
 export const attachOrderContext = (conversationId, orderId, session) =>
   Conversation.findByIdAndUpdate(
@@ -44,11 +45,17 @@ export const listForUser = (userId, sellerIds, { limit, before }) => {
   return Conversation.find(filter)
     .sort({ lastMessageAt: -1, updatedAt: -1, _id: -1 })
     .limit(limit)
-    .populate('productId', 'uuid title images price status offersEnabled')
+    .populate('buyerId', 'fullName avatarUrl email')
     .populate(
-      'sellerId',
-      'displayName avatarUrl averageFeedbackRating feedbackCount userId',
+      'productId',
+      'uuid title images price status stock listingType offersEnabled',
     )
+    .populate({
+      path: 'sellerId',
+      select:
+        'displayName avatarUrl averageFeedbackRating feedbackCount userId',
+      populate: { path: 'userId', select: 'email fullName' },
+    })
     .populate('lastMessageId', 'type content offerId status createdAt')
     .lean();
 };
@@ -60,7 +67,10 @@ export const findByClientMessageId = ({
   conversationId,
   senderId,
   clientMessageId,
-}) => Message.findOne({ conversationId, senderId, clientMessageId }).lean();
+}) =>
+  Message.findOne({ conversationId, senderId, clientMessageId })
+    .populate('senderId', 'email fullName avatarUrl')
+    .lean();
 
 export const updateAfterMessage = (
   conversation,
@@ -86,6 +96,7 @@ export const listMessages = ({ conversationId, limit, before }) => {
   return Message.find(filter)
     .sort({ _id: -1 })
     .limit(limit)
+    .populate('senderId', 'email fullName avatarUrl')
     .populate('offerId')
     .lean();
 };

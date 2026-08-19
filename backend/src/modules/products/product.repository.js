@@ -311,7 +311,7 @@ export const findAvailabilityByUuids = (uuids) =>
 // Offerable-listing lookup (for creating a Best Offer): a buyer-visible product.
 export const findOfferable = (productId) =>
   Product.findOne({ _id: productId, status: { $in: visibleStatuses } })
-    .select('uuid title images listingType offersEnabled status')
+    .select('uuid title images listingType offersEnabled status price stock')
     .lean();
 
 // Map(idString → { uuid, title, images }) for a batch of ids (offers list).

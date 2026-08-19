@@ -15,14 +15,19 @@ import { auctionApi } from '../services/auction-api';
 export function MakeOfferButton({
   uuid,
   isAuthenticated,
+  stock,
+  price,
 }: {
   uuid: string;
   isAuthenticated: boolean;
+  stock: number;
+  price: number;
 }) {
   const { t } = useTranslation();
   const { notify } = useToast();
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState('');
+  const [quantity, setQuantity] = useState('1');
   const [message, setMessage] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
@@ -30,6 +35,7 @@ export function MakeOfferButton({
     mutationFn: () =>
       auctionApi.createOffer(uuid, {
         amount: Number(amount.replace(/\D/g, '')),
+        quantity: Number(quantity),
         message: message.trim() || undefined,
       }),
     onSuccess: () => {
@@ -53,7 +59,12 @@ export function MakeOfferButton({
 
   return (
     <>
-      <Button variant="secondary" size="lg" fullWidth onClick={() => setOpen(true)}>
+      <Button
+        variant="secondary"
+        size="lg"
+        fullWidth
+        onClick={() => setOpen(true)}
+      >
         <Icon variant="icon-tag" size={18} />
         {t('offer.make')}
       </Button>
@@ -75,7 +86,7 @@ export function MakeOfferButton({
               variant="accent"
               loading={createOffer.isPending}
               onClick={() => createOffer.mutate()}
-              disabled={!amount}
+              disabled={!amount || !Number(quantity)}
             >
               {t('offer.submit')}
             </Button>
@@ -86,8 +97,30 @@ export function MakeOfferButton({
           <p className="text-sm text-muted">{t('offer.awaitingResponse')}</p>
         ) : (
           <div className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-text" htmlFor="offer-amount">
-              {t('offer.amount')}
+            {stock > 1 && (
+              <>
+                <label
+                  className="text-sm font-medium text-text"
+                  htmlFor="offer-quantity"
+                >
+                  Quantity
+                </label>
+                <input
+                  id="offer-quantity"
+                  type="number"
+                  min={1}
+                  max={stock}
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  className="h-11 rounded-md border border-border bg-surface px-3 text-sm text-text outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                />
+              </>
+            )}
+            <label
+              className="text-sm font-medium text-text"
+              htmlFor="offer-amount"
+            >
+              Offer price per item
             </label>
             <input
               id="offer-amount"
@@ -97,7 +130,19 @@ export function MakeOfferButton({
               placeholder={formatPrice(0)}
               className="h-11 rounded-md border border-border bg-surface px-3 text-sm text-text outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             />
-            <label className="text-sm font-medium text-text" htmlFor="offer-message">
+            <p className="text-sm text-muted">
+              Original price: {formatPrice(price)} each
+            </p>
+            <p className="text-sm font-semibold text-text">
+              Offer total:{' '}
+              {formatPrice(
+                Number(amount.replace(/\D/g, '') || 0) * Number(quantity || 1),
+              )}
+            </p>
+            <label
+              className="text-sm font-medium text-text"
+              htmlFor="offer-message"
+            >
               {t('offer.message')}
             </label>
             <textarea

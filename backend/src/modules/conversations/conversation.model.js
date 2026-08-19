@@ -54,20 +54,7 @@ const schema = new mongoose.Schema(
   { timestamps: true },
 );
 
-schema.index(
-  { buyerId: 1, sellerId: 1, productId: 1, type: 1 },
-  {
-    unique: true,
-    partialFilterExpression: { type: 'PRE_PURCHASE' },
-  },
-);
-schema.index(
-  { buyerId: 1, sellerId: 1, productId: 1, orderId: 1, type: 1 },
-  {
-    unique: true,
-    partialFilterExpression: { type: 'POST_PURCHASE' },
-  },
-);
+schema.index({ buyerId: 1, sellerId: 1, productId: 1 });
 schema.index({ buyerId: 1, lastMessageAt: -1 });
 schema.index({ sellerId: 1, lastMessageAt: -1 });
 

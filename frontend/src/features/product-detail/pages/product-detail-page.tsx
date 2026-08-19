@@ -40,7 +40,8 @@ export default function ProductDetailPage() {
   const navigate = useNavigate();
   const [qty, setQty] = useState(1);
   const contactSeller = useMutation({
-    mutationFn: () => messagingApi.createConversation({ productId: product!.id }),
+    mutationFn: () =>
+      messagingApi.createConversation({ productId: product!.id }),
     onSuccess: (conversation) => navigate(paths.message(conversation.id)),
     onError: (err) => notify(messageFromError(err), 'error'),
   });
@@ -59,7 +60,11 @@ export default function ProductDetailPage() {
   const availability = useAvailability(
     product && !isAuction ? [product.id] : [],
   );
-  const { liveStock, removed, outOfStock: liveOutOfStock } = resolveLiveStock(
+  const {
+    liveStock,
+    removed,
+    outOfStock: liveOutOfStock,
+  } = resolveLiveStock(
     { stock: product?.stock ?? 0, status: product?.status },
     product ? availability.map.get(product.id) : undefined,
     availability.loaded,
@@ -80,7 +85,9 @@ export default function ProductDetailPage() {
           description={t('productDetail.notFoundDescription')}
           action={
             <Link to={paths.products}>
-              <Button variant="secondary">{t('productDetail.backToProducts')}</Button>
+              <Button variant="secondary">
+                {t('productDetail.backToProducts')}
+              </Button>
             </Link>
           }
         />
@@ -108,9 +115,14 @@ export default function ProductDetailPage() {
   return (
     <div className="mx-auto max-w-[1280px] px-4 py-8">
       <nav className="mb-4 flex items-center gap-1.5 text-sm text-muted">
-        <Link to={paths.home} className="hover:text-primary">{t('productDetail.breadcrumbHome')}</Link>
+        <Link to={paths.home} className="hover:text-primary">
+          {t('productDetail.breadcrumbHome')}
+        </Link>
         <Icon variant="icon-chevron-right" size={14} />
-        <Link to={`${paths.products}?categoryId=${product.category.id}`} className="hover:text-primary">
+        <Link
+          to={`${paths.products}?categoryId=${product.category.id}`}
+          className="hover:text-primary"
+        >
           {product.category.name}
         </Link>
       </nav>
@@ -122,9 +134,18 @@ export default function ProductDetailPage() {
           {isAuction && auctionRealtime ? (
             <>
               <BidderStatusBanner auction={auctionRealtime} />
-              <h1 className="text-2xl font-extrabold text-text">{product.title}</h1>
-              <Rating value={product.averageRating} count={product.reviewCount} showValue size={18} />
-              <p className="text-sm leading-relaxed text-muted">{product.description}</p>
+              <h1 className="text-2xl font-extrabold text-text">
+                {product.title}
+              </h1>
+              <Rating
+                value={product.averageRating}
+                count={product.reviewCount}
+                showValue
+                size={18}
+              />
+              <p className="text-sm leading-relaxed text-muted">
+                {product.description}
+              </p>
               <AuctionBuyBox
                 uuid={product.id}
                 auction={auctionRealtime}
@@ -136,24 +157,37 @@ export default function ProductDetailPage() {
             <>
               <div>
                 {removed ? (
-                  <Badge tone="danger">{t('productDetail.noLongerAvailable')}</Badge>
+                  <Badge tone="danger">
+                    {t('productDetail.noLongerAvailable')}
+                  </Badge>
                 ) : outOfStock ? (
                   <Badge tone="danger">{t('productDetail.outOfStock')}</Badge>
                 ) : (
                   <Badge tone="success">{t('productDetail.inStock')}</Badge>
                 )}
-                <h1 className="mt-2 text-2xl font-extrabold text-text">{product.title}</h1>
+                <h1 className="mt-2 text-2xl font-extrabold text-text">
+                  {product.title}
+                </h1>
               </div>
 
-              <Rating value={product.averageRating} count={product.reviewCount} showValue size={18} />
+              <Rating
+                value={product.averageRating}
+                count={product.reviewCount}
+                showValue
+                size={18}
+              />
 
               <Price cents={product.price} className="text-3xl" />
 
-              <p className="text-sm leading-relaxed text-muted">{product.description}</p>
+              <p className="text-sm leading-relaxed text-muted">
+                {product.description}
+              </p>
 
               {!outOfStock && (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <span className="text-sm text-muted">{t('productDetail.quantity')}</span>
+                  <span className="text-sm text-muted">
+                    {t('productDetail.quantity')}
+                  </span>
                   <div className="flex items-center rounded-md border border-border">
                     <button
                       onClick={() => setQty((q) => Math.max(1, q - 1))}
@@ -162,7 +196,9 @@ export default function ProductDetailPage() {
                     >
                       <Icon variant="icon-minus" size={16} />
                     </button>
-                    <span className="w-12 text-center text-sm font-semibold text-text">{qty}</span>
+                    <span className="w-12 text-center text-sm font-semibold text-text">
+                      {qty}
+                    </span>
                     <button
                       onClick={() => setQty((q) => Math.min(liveStock, q + 1))}
                       disabled={qty >= liveStock}
@@ -172,12 +208,16 @@ export default function ProductDetailPage() {
                       <Icon variant="icon-plus" size={16} />
                     </button>
                   </div>
-                  <span className="text-sm text-muted">{t('productDetail.stockAvailable', { count: liveStock })}</span>
+                  <span className="text-sm text-muted">
+                    {t('productDetail.stockAvailable', { count: liveStock })}
+                  </span>
                 </div>
               )}
 
               {removed && (
-                <p className="text-sm font-medium text-danger">{t('productDetail.removedNote')}</p>
+                <p className="text-sm font-medium text-danger">
+                  {t('productDetail.removedNote')}
+                </p>
               )}
               {exceedsStock && (
                 <p className="text-sm font-medium text-danger">
@@ -215,7 +255,12 @@ export default function ProductDetailPage() {
               </div>
 
               {product.offersEnabled && (
-                <MakeOfferButton uuid={product.id} isAuthenticated={isAuthenticated} />
+                <MakeOfferButton
+                  uuid={product.id}
+                  isAuthenticated={isAuthenticated}
+                  stock={liveStock}
+                  price={product.price}
+                />
               )}
 
               <SellerCard seller={product.seller} />

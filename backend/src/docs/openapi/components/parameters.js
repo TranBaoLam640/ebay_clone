@@ -34,6 +34,7 @@ export const parameters = {
     'Seller profile identifier, not a user identifier.',
   ),
   OrderId: identifier('orderId', 'Order identifier.'),
+  OrderItemId: identifier('orderItemId', 'Embedded order item identifier.'),
   FeedbackId: identifier('feedbackId', 'Seller feedback identifier.'),
   CheckoutGroupId: identifier(
     'checkoutGroupId',

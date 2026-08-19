@@ -11,6 +11,15 @@ export const listByBuyer = (buyerId) =>
 export const findOwned = (buyerId, offerId) =>
   Offer.findOne({ _id: offerId, buyerId }).lean();
 
+export const findBlockingByConversation = (conversationId, session) =>
+  Offer.findOne({
+    conversationId,
+    status: { $in: ['PENDING', 'ACCEPTED'] },
+  })
+    .sort({ createdAt: -1, _id: -1 })
+    .session(session || null)
+    .lean();
+
 /**
  * Withdraw a still-pending offer. Atomic guard on status: PENDING so a
  * concurrent withdraw/expire can't double-transition. Returns the updated doc
@@ -32,6 +41,18 @@ export const updatePendingStatus = (offerId, status, session) =>
   Offer.findOneAndUpdate(
     { _id: offerId, status: 'PENDING', expiresAt: { $gt: new Date() } },
     { $set: { status } },
+    { returnDocument: 'after', session },
+  ).lean();
+
+export const retractPendingByCreator = (offerId, userId, session) =>
+  Offer.findOneAndUpdate(
+    {
+      _id: offerId,
+      createdBy: userId,
+      status: 'PENDING',
+      expiresAt: { $gt: new Date() },
+    },
+    { $set: { status: 'WITHDRAWN' } },
     { returnDocument: 'after', session },
   ).lean();
 

@@ -29,6 +29,7 @@ export const conversationOfferSchema = z.object({
   body: z
     .object({
       price: money,
+      quantity: z.number().int().positive().max(999).optional(),
       message: z.string().trim().max(500).optional(),
     })
     .strict(),
@@ -42,6 +43,7 @@ export const counterOfferSchema = z.object({
   body: z
     .object({
       price: money,
+      quantity: z.number().int().positive().max(999).optional(),
       message: z.string().trim().max(500).optional(),
     })
     .strict(),

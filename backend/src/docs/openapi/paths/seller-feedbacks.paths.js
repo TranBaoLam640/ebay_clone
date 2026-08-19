@@ -1,5 +1,4 @@
 import {
-  body,
   collection,
   idParam,
   operation,
@@ -9,6 +8,36 @@ import {
   response,
   security,
 } from '../components/index.js';
+
+const jsonBody = (schemaRef) => ({
+  required: true,
+  content: {
+    'application/json': { schema: schemaRef },
+    'multipart/form-data': {
+      schema: {
+        allOf: [
+          schemaRef,
+          {
+            type: 'object',
+            properties: {
+              images: {
+                type: 'array',
+                maxItems: 5,
+                items: { type: 'string', format: 'binary' },
+              },
+            },
+          },
+        ],
+      },
+    },
+  },
+});
+
+const body = (schemaRef) => ({
+  required: true,
+  content: { 'application/json': { schema: schemaRef } },
+});
+
 export const sellerFeedbackPaths = {
   '/sellers/{sellerId}/feedbacks': {
     get: operation({
@@ -29,13 +58,66 @@ export const sellerFeedbackPaths = {
       security: [],
     }),
   },
+  '/sellers/{sellerId}/feedback-summary': {
+    get: operation({
+      tag: 'Seller Feedback',
+      operationId: 'getSellerFeedbackSummary',
+      summary: 'Get seller feedback summary',
+      parameters: [idParam('sellerId')],
+      success: response(
+        'Seller feedback summary',
+        ref('SellerFeedbackSummary'),
+      ),
+      errors: [400, 404, 429, 500],
+      security: [],
+    }),
+  },
+  '/seller-feedbacks/awaiting': {
+    get: operation({
+      tag: 'Seller Feedback',
+      operationId: 'listAwaitingSellerFeedback',
+      summary: 'List delivered order items awaiting seller feedback',
+      success: response(
+        'Order items awaiting seller feedback',
+        collection('AwaitingSellerFeedbackItem'),
+      ),
+      errors: [401, 429, 500],
+      security: security.access,
+    }),
+  },
   '/orders/{orderId}/seller-feedback': {
     post: operation({
       tag: 'Seller Feedback',
       operationId: 'createSellerFeedback',
-      summary: 'Review the seller for an order',
+      summary: 'Review the seller for a single-item order',
+      description:
+        'Legacy whole-order route retained for compatibility. Prefer POST /orders/{orderId}/items/{orderItemId}/seller-feedback.',
       parameters: [idParam('orderId')],
-      requestBody: body({
+      requestBody: jsonBody({
+        $ref: '#/components/schemas/CreateLegacySellerFeedbackRequest',
+      }),
+      success: response('Seller feedback created', ref('SellerFeedback')),
+      successStatus: 201,
+      errors: [400, 401, 403, 404, 409, 413, 429, 500],
+      security: security.unsafe,
+    }),
+  },
+  '/orders/{orderId}/items/{orderItemId}/seller-feedback': {
+    get: operation({
+      tag: 'Seller Feedback',
+      operationId: 'getOrderItemSellerFeedback',
+      summary: 'Get seller feedback for an order item',
+      parameters: [idParam('orderId'), idParam('orderItemId')],
+      success: response('Seller feedback lookup', ref('SellerFeedbackLookup')),
+      errors: [400, 401, 403, 404, 429, 500],
+      security: security.access,
+    }),
+    post: operation({
+      tag: 'Seller Feedback',
+      operationId: 'createOrderItemSellerFeedback',
+      summary: 'Review the seller for an order item',
+      parameters: [idParam('orderId'), idParam('orderItemId')],
+      requestBody: jsonBody({
         $ref: '#/components/schemas/CreateSellerFeedbackRequest',
       }),
       success: response('Seller feedback created', ref('SellerFeedback')),
@@ -63,6 +145,23 @@ export const sellerFeedbackPaths = {
       summary: 'Delete seller feedback',
       parameters: [idParam('feedbackId')],
       errors: [400, 401, 403, 404, 429, 500],
+      security: security.unsafe,
+    }),
+  },
+  '/seller-feedbacks/{feedbackId}/response': {
+    post: operation({
+      tag: 'Seller Feedback',
+      operationId: 'respondToSellerFeedback',
+      summary: 'Respond to seller feedback',
+      parameters: [idParam('feedbackId')],
+      requestBody: body({
+        $ref: '#/components/schemas/SellerFeedbackResponseRequest',
+      }),
+      success: response(
+        'Seller feedback response created',
+        ref('SellerFeedback'),
+      ),
+      errors: [400, 401, 403, 404, 409, 413, 429, 500],
       security: security.unsafe,
     }),
   },

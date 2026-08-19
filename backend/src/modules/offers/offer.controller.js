@@ -43,6 +43,7 @@ export const createConversationOffer = async (req, res, next) => {
         conversationId: req.validated.params.id,
         userId: req.user.id,
         price: req.validated.body.price,
+        quantity: req.validated.body.quantity,
         message: req.validated.body.message,
       }),
       201,
@@ -74,6 +75,17 @@ export const declineOffer = async (req, res, next) => {
   }
 };
 
+export const retractOffer = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.retractOffer(req.user.id, req.validated.params.offerId),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const counterOffer = async (req, res, next) => {
   try {
     success(
@@ -82,6 +94,7 @@ export const counterOffer = async (req, res, next) => {
         userId: req.user.id,
         offerId: req.validated.params.offerId,
         price: req.validated.body.price,
+        quantity: req.validated.body.quantity,
         message: req.validated.body.message,
       }),
       201,

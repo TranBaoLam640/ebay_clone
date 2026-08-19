@@ -40,7 +40,6 @@ const schema = new mongoose.Schema(
     conversationId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Conversation',
-      index: true,
     },
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -79,5 +78,15 @@ schema.index({ buyerId: 1, createdAt: -1 });
 schema.index({ productId: 1, status: 1 });
 schema.index({ conversationId: 1, createdAt: -1 });
 schema.index({ parentOfferId: 1 });
+schema.index(
+  { conversationId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      conversationId: { $exists: true },
+      status: { $in: ['PENDING', 'ACCEPTED'] },
+    },
+  },
+);
 
 export const Offer = mongoose.model('Offer', schema);

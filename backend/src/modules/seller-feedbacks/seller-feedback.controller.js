@@ -5,8 +5,77 @@ export const create = async (req, res, next) => {
   try {
     success(
       res,
-      await service.create(req.user.id, req.params.orderId, req.validated.body),
+      await service.create(
+        req.user.id,
+        req.params.orderId,
+        req.validated.body,
+        req.files || [],
+      ),
       201,
+    );
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const createForOrderItem = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.createForOrderItem(
+        req.user.id,
+        req.params.orderId,
+        req.params.orderItemId,
+        req.validated.body,
+        req.files || [],
+      ),
+      201,
+    );
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const getForOrderItem = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.getForOrderItem(
+        req.user.id,
+        req.params.orderId,
+        req.params.orderItemId,
+      ),
+    );
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const awaiting = async (req, res, next) => {
+  try {
+    success(res, await service.awaiting(req.user.id));
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const summary = async (req, res, next) => {
+  try {
+    success(res, await service.summary(req.params.sellerId));
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const respond = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.respond(
+        req.user.id,
+        req.params.feedbackId,
+        req.validated.body,
+      ),
     );
   } catch (e) {
     next(e);

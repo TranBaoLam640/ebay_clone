@@ -42,8 +42,8 @@ describe('Swagger documentation', () => {
   it('contains exactly the expected unique operation inventory', async () => {
     const document = await getDocument();
     const inventory = getRouteInventory(document);
-    expect(inventory).toHaveLength(53);
-    expect(Object.keys(document.paths)).toHaveLength(44);
+    expect(inventory).toHaveLength(73);
+    expect(Object.keys(document.paths)).toHaveLength(61);
     expect(new Set(inventory)).toEqual(new Set(EXPECTED_ROUTE_INVENTORY));
     const operationIds = getOperations(document).map(
       ({ operation: item }) => item.operationId,
@@ -85,6 +85,9 @@ describe('Swagger documentation', () => {
       ['get', '/api/v1/orders/{orderId}'],
       ['get', '/api/v1/returns'],
       ['get', '/api/v1/returns/{returnId}'],
+      ['get', '/api/v1/conversations'],
+      ['get', '/api/v1/conversations/{id}/messages'],
+      ['get', '/api/v1/me/offers'],
     ])
       expectSecurity(document, method, path, access);
     for (const [method, path] of [
@@ -100,6 +103,17 @@ describe('Swagger documentation', () => {
       ['post', '/api/v1/payments/paypal/capture'],
       ['post', '/api/v1/payments/cod/confirm'],
       ['post', '/api/v1/returns'],
+      ['post', '/api/v1/conversations'],
+      ['post', '/api/v1/conversations/{id}/messages'],
+      ['post', '/api/v1/conversations/{id}/attachments'],
+      ['patch', '/api/v1/conversations/{id}/read'],
+      ['patch', '/api/v1/conversations/{id}/archive'],
+      ['post', '/api/v1/conversations/{id}/offers'],
+      ['post', '/api/v1/products/{productId}/offers'],
+      ['delete', '/api/v1/me/offers/{offerId}'],
+      ['post', '/api/v1/offers/{offerId}/accept'],
+      ['post', '/api/v1/offers/{offerId}/decline'],
+      ['post', '/api/v1/offers/{offerId}/counter'],
     ])
       expectSecurity(document, method, path, unsafe);
   });
@@ -118,6 +132,27 @@ describe('Swagger documentation', () => {
       operation(document, 'post', '/api/v1/checkout/preview').requestBody
         .content['application/json'].schema.$ref,
     ).toBe('#/components/schemas/CheckoutRequest');
+    expect(
+      document.components.schemas.CheckoutRequest.properties.offerId,
+    ).toEqual(expect.objectContaining({ pattern: '^[a-fA-F0-9]{24}$' }));
+    expect(
+      document.components.schemas.CheckoutPreview.properties.offer,
+    ).toEqual(
+      expect.objectContaining({
+        allOf: [{ $ref: '#/components/schemas/CheckoutOfferSummary' }],
+        nullable: true,
+      }),
+    );
+    expect(document.components.schemas.Order.properties.offerId).toEqual(
+      expect.objectContaining({ pattern: '^[a-fA-F0-9]{24}$' }),
+    );
+    expect(document.components.schemas.OrderItem.properties).toEqual(
+      expect.objectContaining({
+        offerId: expect.objectContaining({ pattern: '^[a-fA-F0-9]{24}$' }),
+        originalPrice: expect.objectContaining({ type: 'integer' }),
+        finalPrice: expect.objectContaining({ type: 'integer' }),
+      }),
+    );
     expect(document.components.schemas.CartItem.properties.product.$ref).toBe(
       '#/components/schemas/CartProduct',
     );
@@ -143,6 +178,27 @@ describe('Swagger documentation', () => {
     expect(
       document.components.schemas.ReturnRequest.properties.status.enum,
     ).toEqual(['REQUESTED', 'APPROVED', 'REJECTED', 'COMPLETED', 'CANCELLED']);
+    expect(document.components.schemas.Offer.properties.status.enum).toContain(
+      'PURCHASED',
+    );
+    expect(document.components.schemas.Offer.properties).toEqual(
+      expect.objectContaining({
+        quantity: expect.objectContaining({ type: 'integer' }),
+        orderId: expect.objectContaining({ nullable: true }),
+        usedAt: expect.objectContaining({ nullable: true }),
+      }),
+    );
+    expect(document.components.schemas.OfferUpdatedEvent.$ref).toBe(
+      '#/components/schemas/Offer',
+    );
+    expect(
+      document.components.schemas.ConversationUpdatedEvent.properties.orderId,
+    ).toEqual(expect.objectContaining({ nullable: true }));
+    expect(
+      operation(document, 'post', '/api/v1/conversations/{id}/attachments')
+        .requestBody.content['multipart/form-data'].schema.properties.files
+        .items.format,
+    ).toBe('binary');
     const orderParameters = operation(
       document,
       'get',

@@ -47,7 +47,8 @@ const attachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: env.UPLOAD_MAX_BYTES, files: MESSAGE_ATTACHMENT_LIMIT },
   fileFilter: (req, file, cb) => {
-    if (ALLOWED_MESSAGE_ATTACHMENT_MIMES.includes(file.mimetype)) cb(null, true);
+    if (ALLOWED_MESSAGE_ATTACHMENT_MIMES.includes(file.mimetype))
+      cb(null, true);
     else
       cb(
         new AppError(
@@ -60,7 +61,54 @@ const attachmentUpload = multer({
 });
 
 export const messageAttachments = (req, res, next) =>
-  attachmentUpload.array('files', MESSAGE_ATTACHMENT_LIMIT)(req, res, (error) => {
+  attachmentUpload.array('files', MESSAGE_ATTACHMENT_LIMIT)(
+    req,
+    res,
+    (error) => {
+      if (!error) return next();
+      if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE')
+          return next(
+            new AppError(
+              413,
+              ERROR_CODES.UPLOAD_TOO_LARGE,
+              'File is too large',
+            ),
+          );
+        if (
+          error.code === 'LIMIT_FILE_COUNT' ||
+          error.code === 'LIMIT_UNEXPECTED_FILE'
+        )
+          return next(
+            new AppError(
+              400,
+              ERROR_CODES.VALIDATION_ERROR,
+              'Too many attachments',
+            ),
+          );
+      }
+      next(error);
+    },
+  );
+
+const feedbackImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: env.UPLOAD_MAX_BYTES, files: 5 },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_IMAGE_MIMES.includes(file.mimetype)) cb(null, true);
+    else
+      cb(
+        new AppError(
+          400,
+          ERROR_CODES.UPLOAD_INVALID_TYPE,
+          'Unsupported image type',
+        ),
+      );
+  },
+});
+
+export const feedbackImages = (req, res, next) =>
+  feedbackImageUpload.array('images', 5)(req, res, (error) => {
     if (!error) return next();
     if (error instanceof multer.MulterError) {
       if (error.code === 'LIMIT_FILE_SIZE')
@@ -75,7 +123,7 @@ export const messageAttachments = (req, res, next) =>
           new AppError(
             400,
             ERROR_CODES.VALIDATION_ERROR,
-            'Too many attachments',
+            'Too many feedback images',
           ),
         );
     }

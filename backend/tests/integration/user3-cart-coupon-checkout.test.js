@@ -251,7 +251,10 @@ const coupon = (overrides = {}) => ({
 });
 
 beforeAll(async () => {
-  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+  mongo = await MongoMemoryReplSet.create({
+    replSet: { count: 1 },
+    instanceOpts: [{ launchTimeout: 120000 }],
+  });
   process.env.MONGODB_URI = mongo.getUri();
   database = await import('../../src/config/database.js');
   await database.connectDatabase(process.env.MONGODB_URI);
@@ -313,8 +316,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await database.disconnectDatabase();
-  await mongo.stop();
+  if (database) await database.disconnectDatabase();
+  if (mongo) await mongo.stop();
 });
 
 describe('User 3 cart, coupon, and checkout preview', () => {

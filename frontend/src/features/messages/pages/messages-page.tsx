@@ -39,6 +39,44 @@ const ALLOWED_ATTACHMENT_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
+function compareMessages(
+  left: ConversationMessage,
+  right: ConversationMessage,
+) {
+  const byTime =
+    new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+  return byTime || left.id.localeCompare(right.id);
+}
+
+function normalizeId(value: string | null | undefined) {
+  return value ? String(value) : '';
+}
+
+function isOwnMessage(
+  message: ConversationMessage,
+  currentUserId: string | null | undefined,
+) {
+  return normalizeId(message.senderId) === normalizeId(currentUserId);
+}
+
+function sameSender(
+  left: ConversationMessage | undefined,
+  right: ConversationMessage,
+) {
+  return !!left && normalizeId(left.senderId) === normalizeId(right.senderId);
+}
+
+function formatMessageTime(iso: string | null | undefined) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
 interface LocalAttachment {
   id: string;
   file: File;
@@ -57,14 +95,34 @@ export default function MessagesPage() {
   const [hasOlder, setHasOlder] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [typingUser, setTypingUser] = useState<string | null>(null);
+  const [pendingOfferId, setPendingOfferId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const typingTimer = useRef<number | null>(null);
+  const isNearBottom = useCallback(() => {
+    const box = scrollRef.current;
+    if (!box) return true;
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 96;
+  }, []);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior,
+      });
+    });
+  }, []);
 
   const conversations = useQuery({
     queryKey: ['conversations'],
     queryFn: () => messagingApi.conversations({ limit: 50 }),
   });
-  const selected = conversations.data?.find((item) => item.id === selectedId) ?? null;
+  const selected =
+    conversations.data?.find((item) => item.id === selectedId) ?? null;
+  const currentUserId = user?.id ?? user?._id ?? null;
+  const conversationIds = useMemo(
+    () => conversations.data?.map((conversation) => conversation.id) ?? [],
+    [conversations.data],
+  );
 
   const selectConversation = (id: string | null) => {
     setSearch(id ? { conversation: id } : {});
@@ -83,7 +141,11 @@ export default function MessagesPage() {
               message.senderId === incoming.senderId)
           ),
       );
-      return [...withoutTemp, { ...incoming, localStatus: 'sent' }];
+      const canonical: ConversationMessage = {
+        ...incoming,
+        localStatus: 'sent',
+      };
+      return [...withoutTemp, canonical].sort(compareMessages);
     });
   }, []);
 
@@ -95,23 +157,63 @@ export default function MessagesPage() {
     );
   }, []);
 
-  const refreshConversationList = useCallback(() => {
-    qc.invalidateQueries({ queryKey: ['conversations'] });
-  }, [qc]);
+  const updateConversationFromMessage = useCallback(
+    (message: ConversationMessage) => {
+      qc.setQueryData<ConversationSummary[]>(['conversations'], (current) => {
+        if (!current) return current;
+        const updated = current.map((conversation) =>
+          conversation.id === message.conversationId
+            ? {
+                ...conversation,
+                lastMessage: {
+                  id: message.id,
+                  type: message.type,
+                  content: message.content,
+                  status: message.status,
+                  createdAt: message.createdAt,
+                },
+                lastMessageAt: message.createdAt,
+                unreadCount:
+                  message.conversationId === selectedId ||
+                  normalizeId(message.senderId) === normalizeId(currentUserId)
+                    ? conversation.unreadCount
+                    : conversation.unreadCount + 1,
+              }
+            : conversation,
+        );
+        return updated.sort(
+          (left, right) =>
+            new Date(right.lastMessageAt).getTime() -
+            new Date(left.lastMessageAt).getTime(),
+        );
+      });
+    },
+    [currentUserId, qc, selectedId],
+  );
 
   const mergeConversationUpdate = useCallback(
     (payload: ConversationUpdatedPayload) => {
       qc.setQueryData<ConversationSummary[]>(['conversations'], (current) =>
-        current?.map((conversation) =>
-          conversation.id === payload.id
-            ? {
-                ...conversation,
-                ...(payload.type && { type: payload.type }),
-                ...(payload.orderId !== undefined && { orderId: payload.orderId }),
-                ...(payload.lastMessage && { lastMessage: payload.lastMessage }),
-              }
-            : conversation,
-        ),
+        current
+          ?.map((conversation) =>
+            conversation.id === payload.id
+              ? {
+                  ...conversation,
+                  ...(payload.type && { type: payload.type }),
+                  ...(payload.orderId !== undefined && {
+                    orderId: payload.orderId,
+                  }),
+                  ...(payload.lastMessage && {
+                    lastMessage: payload.lastMessage,
+                  }),
+                }
+              : conversation,
+          )
+          .sort(
+            (left, right) =>
+              new Date(right.lastMessageAt).getTime() -
+              new Date(left.lastMessageAt).getTime(),
+          ),
       );
     },
     [qc],
@@ -119,12 +221,24 @@ export default function MessagesPage() {
 
   const socket = useChatSocket({
     conversationId: selectedId,
+    conversationIds,
     onMessage: useCallback(
       (message) => {
-        if (message.conversationId === selectedId) mergeMessage(message);
-        refreshConversationList();
+        const shouldScroll =
+          message.conversationId === selectedId && isNearBottom();
+        if (message.conversationId === selectedId) {
+          mergeMessage(message);
+          if (shouldScroll) scrollToBottom('smooth');
+        }
+        updateConversationFromMessage(message);
       },
-      [mergeMessage, refreshConversationList, selectedId],
+      [
+        isNearBottom,
+        mergeMessage,
+        scrollToBottom,
+        selectedId,
+        updateConversationFromMessage,
+      ],
     ),
     onOfferNew: useCallback(
       (offer) => {
@@ -135,37 +249,39 @@ export default function MessagesPage() {
             ),
           );
         }
-        refreshConversationList();
       },
-      [refreshConversationList, selectedId],
+      [selectedId],
     ),
     onOfferUpdated: useCallback(
       (offer) => {
         updateOfferInMessages(offer);
-        refreshConversationList();
       },
-      [refreshConversationList, updateOfferInMessages],
+      [updateOfferInMessages],
     ),
     onRead: useCallback(
       (payload) => {
         if (payload.conversationId === selectedId) {
           setMessages((current) =>
             current.map((message) =>
-              message.senderId === user?.id ? { ...message, status: 'READ' } : message,
+              normalizeId(message.senderId) === normalizeId(currentUserId)
+                ? { ...message, status: 'READ' }
+                : message,
             ),
           );
         }
-        refreshConversationList();
       },
-      [refreshConversationList, selectedId, user?.id],
+      [currentUserId, selectedId],
     ),
     onTyping: useCallback(
       (payload) => {
-        if (payload.conversationId === selectedId && payload.userId !== user?.id) {
+        if (
+          payload.conversationId === selectedId &&
+          normalizeId(payload.userId) !== normalizeId(currentUserId)
+        ) {
           setTypingUser(payload.userId);
         }
       },
-      [selectedId, user?.id],
+      [currentUserId, selectedId],
     ),
     onTypingStop: useCallback(
       (payload) => {
@@ -176,9 +292,8 @@ export default function MessagesPage() {
     onConversationUpdated: useCallback(
       (payload) => {
         mergeConversationUpdate(payload);
-        refreshConversationList();
       },
-      [mergeConversationUpdate, refreshConversationList],
+      [mergeConversationUpdate],
     ),
   });
 
@@ -192,21 +307,34 @@ export default function MessagesPage() {
         setMessages(items);
         setHasOlder(items.length === PAGE_SIZE);
         requestAnimationFrame(() => {
-          if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          if (scrollRef.current)
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         });
         return messagingApi.markRead(selectedId);
       })
-      .then(refreshConversationList)
+      .then(() => {
+        qc.setQueryData<ConversationSummary[]>(['conversations'], (current) =>
+          current?.map((conversation) =>
+            conversation.id === selectedId
+              ? { ...conversation, unreadCount: 0 }
+              : conversation,
+          ),
+        );
+      })
       .catch((err) => notify(messageFromError(err), 'error'));
-  }, [notify, refreshConversationList, selectedId]);
+  }, [notify, qc, selectedId]);
 
   useEffect(() => {
     if (socket.connected && selectedId) {
       messagingApi.messages(selectedId, { limit: PAGE_SIZE }).then((items) => {
         setMessages((current) => {
           const existing = new Set(current.map((message) => message.id));
-          return [...current, ...items.filter((message) => !existing.has(message.id))].sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+          return [
+            ...current,
+            ...items.filter((message) => !existing.has(message.id)),
+          ].sort(
+            (a, b) =>
+              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
           );
         });
       });
@@ -214,7 +342,8 @@ export default function MessagesPage() {
   }, [selectedId, socket.connected]);
 
   const loadOlder = async () => {
-    if (!selectedId || !hasOlder || loadingOlder || messages.length === 0) return;
+    if (!selectedId || !hasOlder || loadingOlder || messages.length === 0)
+      return;
     const box = scrollRef.current;
     const previousHeight = box?.scrollHeight ?? 0;
     setLoadingOlder(true);
@@ -226,7 +355,10 @@ export default function MessagesPage() {
       setHasOlder(older.length === PAGE_SIZE);
       setMessages((current) => {
         const existing = new Set(current.map((message) => message.id));
-        return [...older.filter((message) => !existing.has(message.id)), ...current];
+        return [
+          ...older.filter((message) => !existing.has(message.id)),
+          ...current,
+        ];
       });
       requestAnimationFrame(() => {
         if (box) box.scrollTop = box.scrollHeight - previousHeight;
@@ -278,13 +410,19 @@ export default function MessagesPage() {
     },
     onSuccess: ({ clientMessageId, saved }) => {
       setMessages((current) =>
-        current.map((message) =>
-          message.clientMessageId === clientMessageId
-            ? { ...saved, clientMessageId, localStatus: 'sent' }
-            : message,
-        ),
+        current
+          .map((message) =>
+            message.clientMessageId === clientMessageId
+              ? ({
+                  ...saved,
+                  clientMessageId,
+                  localStatus: 'sent',
+                } satisfies ConversationMessage)
+              : message,
+          )
+          .sort(compareMessages),
       );
-      refreshConversationList();
+      updateConversationFromMessage(saved);
     },
     onError: (_err, variables) => {
       setMessages((current) =>
@@ -299,27 +437,65 @@ export default function MessagesPage() {
   });
 
   const offerAction = useMutation({
-    mutationFn: (action: { kind: 'make' | 'accept' | 'decline' | 'counter'; offerId?: string; price?: number }) => {
-      if (action.kind === 'accept') return messagingApi.acceptOffer(action.offerId!);
-      if (action.kind === 'decline') return messagingApi.declineOffer(action.offerId!);
-      if (action.kind === 'counter') return messagingApi.counterOffer(action.offerId!, { price: action.price! });
-      return messagingApi.createOffer(selectedId!, { price: action.price! });
-    },
-    onSuccess: (offer) => {
-      updateOfferInMessages(offer);
-      refreshConversationList();
-      if (selectedId) {
-        messagingApi.messages(selectedId, { limit: PAGE_SIZE }).then((items) => {
-          setMessages((current) => {
-            const existing = new Set(current.map((message) => message.id));
-            return [...current, ...items.filter((message) => !existing.has(message.id))].sort(
-              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-            );
-          });
+    mutationFn: (action: {
+      kind: 'make' | 'accept' | 'decline' | 'counter' | 'retract';
+      offerId?: string;
+      price?: number;
+      quantity?: number;
+    }) => {
+      if (action.kind === 'accept')
+        return messagingApi.acceptOffer(action.offerId!);
+      if (action.kind === 'decline')
+        return messagingApi.declineOffer(action.offerId!);
+      if (action.kind === 'retract')
+        return messagingApi.retractOffer(action.offerId!);
+      if (action.kind === 'counter') {
+        return messagingApi.counterOffer(action.offerId!, {
+          price: action.price!,
+          quantity: action.quantity,
         });
       }
+      return messagingApi.createOffer(selectedId!, {
+        price: action.price!,
+        quantity: action.quantity,
+      });
     },
-    onError: (err) => notify(messageFromError(err), 'error'),
+    onMutate: (action) => {
+      setPendingOfferId(action.offerId ?? 'new');
+    },
+    onSuccess: (offer, action) => {
+      updateOfferInMessages(offer);
+      if (selectedId && (action.kind === 'make' || action.kind === 'counter')) {
+        messagingApi
+          .messages(selectedId, { limit: PAGE_SIZE })
+          .then((items) => {
+            setMessages((current) => {
+              const existing = new Set(current.map((message) => message.id));
+              return [
+                ...current,
+                ...items.filter((message) => !existing.has(message.id)),
+              ].sort(compareMessages);
+            });
+          });
+      }
+    },
+    onError: (err) => {
+      notify(messageFromError(err), 'error');
+      if (selectedId) {
+        messagingApi
+          .messages(selectedId, { limit: PAGE_SIZE })
+          .then((items) => {
+            setMessages((current) => {
+              const existing = new Set(current.map((message) => message.id));
+              return [
+                ...current,
+                ...items.filter((message) => !existing.has(message.id)),
+              ].sort(compareMessages);
+            });
+          });
+      }
+    },
+    onSettled: () => setPendingOfferId(null),
   });
 
   const handleScroll = () => {
@@ -327,21 +503,50 @@ export default function MessagesPage() {
   };
 
   const selectedMessages = useMemo(() => messages, [messages]);
+  const hasBlockingOffer = selectedMessages.some(
+    (message) =>
+      message.offer?.conversationId === selectedId &&
+      (message.offer.status === 'PENDING' ||
+        message.offer.status === 'ACCEPTED'),
+  );
+  const listingEligibleForOffer =
+    selected?.product.offersEnabled === true &&
+    selected.product.status === 'ACTIVE' &&
+    (selected.product.stock ?? 0) > 0 &&
+    (selected.product.listingType ?? 'FIXED') === 'FIXED';
+  const canMakeOffer =
+    selected?.role === 'BUYER' && listingEligibleForOffer && !hasBlockingOffer;
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-96px)] max-w-[1280px] flex-col px-4 py-4">
-      <div className="mb-3 flex items-center justify-between">
+    <div className="mx-auto flex h-[calc(100vh-112px)] max-w-[1180px] flex-col px-4 py-5">
+      <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-text">Messages</h1>
-          <p className="text-sm text-muted">
+          <h1 className="text-2xl font-extrabold text-text">Messages</h1>
+          <p className="mt-0.5 flex items-center gap-1.5 text-sm text-muted">
+            <span
+              className={cn(
+                'h-2 w-2 rounded-full',
+                socket.connected ? 'bg-success' : 'bg-warning',
+              )}
+            />
             {socket.connected ? 'Realtime connected' : 'Realtime reconnecting'}
           </p>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-surface">
-        <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[320px_minmax(0,1fr)]">
-          <aside className={cn('min-h-0 border-border md:border-r', selectedId && 'hidden md:block')}>
+      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-surface shadow-card">
+        <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]">
+          <aside
+            className={cn(
+              'min-h-0 border-border bg-surface md:border-r',
+              selectedId && 'hidden md:block',
+            )}
+          >
+            <div className="border-b border-border px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                Inbox
+              </p>
+            </div>
             {conversations.isLoading ? (
               <ConversationSkeleton />
             ) : conversations.data?.length ? (
@@ -357,7 +562,11 @@ export default function MessagesPage() {
               </div>
             ) : (
               <div className="p-5">
-                <EmptyState icon="icon-mail" title="No messages yet" description="Contact a seller from a listing to start a conversation." />
+                <EmptyState
+                  icon="icon-mail"
+                  title="No messages yet"
+                  description="Contact a seller from a listing to start a conversation."
+                />
               </div>
             )}
           </aside>
@@ -365,72 +574,138 @@ export default function MessagesPage() {
           <main className={cn('min-h-0', !selectedId && 'hidden md:block')}>
             {selected ? (
               <div className="flex h-full min-h-0 flex-col">
-                <ChatHeader conversation={selected} onBack={() => selectConversation(null)} />
+                <ChatHeader
+                  conversation={selected}
+                  onBack={() => selectConversation(null)}
+                />
                 <div
                   ref={scrollRef}
                   onScroll={handleScroll}
-                  className="min-h-0 flex-1 overflow-y-auto bg-surface-2/40 px-4 py-4"
+                  className="min-h-0 flex-1 overflow-y-auto bg-surface-2/30 px-4 py-5 sm:px-6"
                 >
-                  {loadingOlder && <p className="pb-2 text-center text-xs text-muted">Loading older messages...</p>}
+                  {loadingOlder && (
+                    <p className="pb-2 text-center text-xs text-muted">
+                      Loading older messages...
+                    </p>
+                  )}
                   {selectedMessages.length === 0 ? (
-                    <EmptyState icon="icon-mail" title="No messages yet" description="Send the first message in this listing conversation." />
+                    <EmptyState
+                      icon="icon-mail"
+                      title="No messages yet"
+                      description="Send the first message in this listing conversation."
+                    />
                   ) : (
                     <div className="flex flex-col gap-3">
-                      {selectedMessages.map((message) => (
-                        <MessageBubble
-                          key={message.clientMessageId ?? message.id}
-                          message={message}
-                          own={message.senderId === user?.id}
-                          conversation={selected}
-                          onRetry={() => {
-                            if (!message.content || !message.clientMessageId) return;
-                            send.mutate({
-                              content: message.content,
-                              sendCopyToEmail: false,
-                              clientMessageId: message.clientMessageId,
-                              attachments: [],
-                              restoreDraft: undefined,
-                            });
-                          }}
-                          onOfferAction={(action) => offerAction.mutate(action)}
-                          onBuyOffer={async (offer) => {
-                            try {
-                              await cartApi.setQuantity(
-                                selected.product.id,
-                                offer.quantity ?? 1,
-                              );
-                              navigate(`${paths.checkout}?offerId=${offer.id}`);
-                            } catch (err) {
-                              notify(messageFromError(err), 'error');
+                      {selectedMessages.map((message, index) => {
+                        const own = isOwnMessage(message, currentUserId);
+                        const compactWithPrevious = sameSender(
+                          selectedMessages[index - 1],
+                          message,
+                        );
+                        return (
+                          <MessageBubble
+                            key={message.clientMessageId ?? message.id}
+                            message={message}
+                            own={own}
+                            compactWithPrevious={compactWithPrevious}
+                            senderLabel={messageSenderLabel(
+                              message,
+                              selected,
+                              own,
+                            )}
+                            conversation={selected}
+                            offerLoading={pendingOfferId === message.offer?.id}
+                            onRetry={() => {
+                              if (!message.content || !message.clientMessageId)
+                                return;
+                              send.mutate({
+                                content: message.content,
+                                sendCopyToEmail: false,
+                                clientMessageId: message.clientMessageId,
+                                attachments: [],
+                                restoreDraft: undefined,
+                              });
+                            }}
+                            onOfferAction={(action) =>
+                              offerAction.mutate(action)
                             }
-                          }}
-                        />
-                      ))}
+                            onBuyOffer={async (offer) => {
+                              try {
+                                const quantity = offer.quantity ?? 1;
+                                const cart = await cartApi.get();
+                                const existing = cart.items.find(
+                                  (item) =>
+                                    item.productId === selected.product.id,
+                                );
+                                if (existing) {
+                                  await cartApi.setQuantity(
+                                    selected.product.id,
+                                    quantity,
+                                  );
+                                } else {
+                                  await cartApi.addItem(
+                                    selected.product.id,
+                                    quantity,
+                                  );
+                                }
+                                qc.invalidateQueries({ queryKey: ['cart'] });
+                                navigate(
+                                  `${paths.checkout}?offerId=${offer.id}&productId=${selected.product.id}`,
+                                );
+                              } catch (err) {
+                                notify(messageFromError(err), 'error');
+                              }
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                   )}
-                  {typingUser && <p className="mt-3 text-sm text-muted">{selected.seller.displayName} is typing...</p>}
+                  {typingUser && (
+                    <p className="mt-3 text-sm text-muted">
+                      {conversationParticipant(selected).displayName} is
+                      typing...
+                    </p>
+                  )}
                 </div>
                 <Composer
                   disabled={!selectedId}
                   onTyping={() => {
                     socket.startTyping();
-                    if (typingTimer.current) window.clearTimeout(typingTimer.current);
-                    typingTimer.current = window.setTimeout(socket.stopTyping, 1200);
+                    if (typingTimer.current)
+                      window.clearTimeout(typingTimer.current);
+                    typingTimer.current = window.setTimeout(
+                      socket.stopTyping,
+                      1200,
+                    );
                   }}
-                  onSend={(content, sendCopyToEmail, attachments, restoreDraft) => {
+                  onSend={(
+                    content,
+                    sendCopyToEmail,
+                    attachments,
+                    restoreDraft,
+                  ) => {
                     const clientMessageId = crypto.randomUUID();
-                    const optimisticAttachments = attachments.map((attachment) => ({
-                      url: attachment.previewUrl || '',
-                      fileName: attachment.file.name,
-                      mimeType: attachment.file.type,
-                      size: attachment.file.size,
-                      type: attachment.type,
-                    }));
+                    const optimisticAttachments = attachments.map(
+                      (attachment) => ({
+                        url: attachment.previewUrl || '',
+                        fileName: attachment.file.name,
+                        mimeType: attachment.file.type,
+                        size: attachment.file.size,
+                        type: attachment.type,
+                      }),
+                    );
                     const optimistic: ConversationMessage = {
                       id: clientMessageId,
                       clientMessageId,
                       conversationId: selected.id,
-                      senderId: user!.id,
+                      senderId: currentUserId!,
+                      sender: {
+                        id: currentUserId!,
+                        displayName: user!.fullName,
+                        username: user!.email.split('@')[0],
+                        avatarUrl: user!.avatarUrl,
+                      },
                       type: messageTypeFor(optimisticAttachments),
                       content,
                       attachments: optimisticAttachments,
@@ -439,9 +714,7 @@ export default function MessagesPage() {
                       createdAt: new Date().toISOString(),
                     };
                     setMessages((current) => [...current, optimistic]);
-                    requestAnimationFrame(() => {
-                      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-                    });
+                    scrollToBottom();
                     send.mutate({
                       content,
                       sendCopyToEmail,
@@ -451,14 +724,22 @@ export default function MessagesPage() {
                     });
                   }}
                   sending={send.isPending}
-                  canOffer={selected.type === 'PRE_PURCHASE'}
-                  onMakeOffer={(price) => offerAction.mutate({ kind: 'make', price })}
+                  canOffer={canMakeOffer}
+                  productStock={selected.product.stock ?? 1}
+                  productPrice={selected.product.price}
+                  onMakeOffer={(price, quantity) =>
+                    offerAction.mutate({ kind: 'make', price, quantity })
+                  }
                   offerLoading={offerAction.isPending}
                 />
               </div>
             ) : (
               <div className="flex h-full items-center justify-center p-6">
-                <EmptyState icon="icon-mail" title="Select a conversation" description="Choose a listing conversation to view messages." />
+                <EmptyState
+                  icon="icon-mail"
+                  title="Select a conversation"
+                  description="Choose a listing conversation to view messages."
+                />
               </div>
             )}
           </main>
@@ -468,7 +749,9 @@ export default function MessagesPage() {
   );
 }
 
-function messageTypeFor(attachments: Pick<MessageAttachment, 'type' | 'mimeType'>[]) {
+function messageTypeFor(
+  attachments: Pick<MessageAttachment, 'type' | 'mimeType'>[],
+) {
   if (attachments.length === 0) return 'TEXT';
   return attachments.some(
     (attachment) =>
@@ -476,6 +759,34 @@ function messageTypeFor(attachments: Pick<MessageAttachment, 'type' | 'mimeType'
   )
     ? 'FILE'
     : 'IMAGE';
+}
+
+function conversationParticipant(conversation: ConversationSummary) {
+  if (conversation.role === 'SELLER' && conversation.buyer)
+    return conversation.buyer;
+  const emailUsername = conversation.seller.email?.split('@')[0];
+  return {
+    ...conversation.seller,
+    displayName:
+      conversation.seller.username ||
+      emailUsername ||
+      conversation.seller.displayName ||
+      'Seller',
+  };
+}
+
+function messageSenderLabel(
+  message: ConversationMessage,
+  conversation: ConversationSummary,
+  own: boolean,
+) {
+  if (own) return 'You';
+  if (message.sender?.displayName) return message.sender.displayName;
+  if (message.sender?.username) return message.sender.username;
+  if (normalizeId(message.senderId) === normalizeId(conversation.buyer?.id)) {
+    return conversation.buyer?.displayName || 'Buyer';
+  }
+  return conversationParticipant(conversation).displayName;
 }
 
 function ConversationRow({
@@ -491,69 +802,111 @@ function ConversationRow({
     conversation.lastMessage?.type === 'OFFER'
       ? 'Offer update'
       : conversation.lastMessage?.content || 'No messages yet';
+  const participant = conversationParticipant(conversation);
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'flex w-full gap-3 border-b border-border p-3 text-left hover:bg-surface-2',
-        active && 'bg-surface-2',
+        'flex w-full gap-3 border-b border-border px-3 py-3 text-left transition-colors hover:bg-surface-2/70',
+        active && 'bg-surface-2 shadow-[inset_3px_0_0_var(--color-primary)]',
       )}
     >
-      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md bg-surface-2">
+      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-surface-2">
         {conversation.product.image ? (
-          <img src={conversation.product.image} alt={conversation.product.title} className="h-full w-full object-cover" />
+          <img
+            src={conversation.product.image}
+            alt={conversation.product.title}
+            className="h-full w-full object-cover"
+          />
         ) : (
           <Icon variant="icon-package" size={22} className="m-3 text-muted" />
         )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-sm font-semibold text-text">{conversation.seller.displayName}</p>
+          <p className="truncate text-sm font-semibold text-text">
+            {participant.displayName}
+          </p>
           {conversation.unreadCount > 0 && (
             <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-on-accent">
               {conversation.unreadCount}
             </span>
           )}
         </div>
-        <p className="truncate text-sm text-text">{conversation.product.title}</p>
-        <p className="truncate text-xs text-muted">{preview}</p>
-        <p className="mt-1 text-xs text-muted">{formatDate(conversation.lastMessageAt)}</p>
+        <p className="mt-0.5 truncate text-sm text-text/90">
+          {conversation.product.title}
+        </p>
+        <p className="mt-1 truncate text-xs text-muted">{preview}</p>
+        <p className="mt-1.5 text-xs text-muted">
+          {formatDate(conversation.lastMessageAt)}
+        </p>
       </div>
     </button>
   );
 }
 
-function ChatHeader({ conversation, onBack }: { conversation: ConversationSummary; onBack: () => void }) {
+function ChatHeader({
+  conversation,
+  onBack,
+}: {
+  conversation: ConversationSummary;
+  onBack: () => void;
+}) {
+  const participant = conversationParticipant(conversation);
   return (
-    <header className="border-b border-border bg-surface p-3">
+    <header className="border-b border-border bg-surface px-4 py-3">
       <div className="flex items-center gap-3">
-        <button type="button" onClick={onBack} className="rounded-md p-2 hover:bg-surface-2 md:hidden" aria-label="Back">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-md p-2 hover:bg-surface-2 md:hidden"
+          aria-label="Back"
+        >
           <Icon variant="icon-arrow-left" size={18} />
         </button>
-        <div className="h-14 w-14 overflow-hidden rounded-md bg-surface-2">
+        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-surface-2">
           {conversation.product.image ? (
-            <img src={conversation.product.image} alt={conversation.product.title} className="h-full w-full object-cover" />
+            <img
+              src={conversation.product.image}
+              alt={conversation.product.title}
+              className="h-full w-full object-cover"
+            />
           ) : (
             <Icon variant="icon-package" size={24} className="m-4 text-muted" />
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <Link to={paths.product(conversation.product.id)} className="truncate font-semibold text-text hover:text-primary">
+          <Link
+            to={paths.product(conversation.product.id)}
+            className="block truncate font-semibold text-text hover:text-primary"
+          >
             {conversation.product.title}
           </Link>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
             <Price cents={conversation.product.price} />
-            <span>{conversation.seller.displayName}</span>
-            {conversation.orderId && <span>Order #{conversation.orderId.slice(-8).toUpperCase()}</span>}
+            <span>{participant.displayName}</span>
+            {conversation.orderId && (
+              <span>Order #{conversation.orderId.slice(-8).toUpperCase()}</span>
+            )}
           </div>
         </div>
-        <Link to={paths.product(conversation.product.id)}>
-          <Button variant="secondary" size="sm">View Listing</Button>
+        <Link
+          to={paths.product(conversation.product.id)}
+          className="hidden sm:block"
+        >
+          <Button variant="secondary" size="sm">
+            View Listing
+          </Button>
         </Link>
         {conversation.orderId && (
-          <Link to={paths.order(conversation.orderId)}>
-            <Button variant="secondary" size="sm">View Order</Button>
+          <Link
+            to={paths.order(conversation.orderId)}
+            className="hidden sm:block"
+          >
+            <Button variant="secondary" size="sm">
+              View Order
+            </Button>
           </Link>
         )}
       </div>
@@ -564,46 +917,98 @@ function ChatHeader({ conversation, onBack }: { conversation: ConversationSummar
 function MessageBubble({
   message,
   own,
+  compactWithPrevious,
+  senderLabel,
   conversation,
+  offerLoading,
   onRetry,
   onOfferAction,
   onBuyOffer,
 }: {
   message: ConversationMessage;
   own: boolean;
+  compactWithPrevious: boolean;
+  senderLabel: string;
   conversation: ConversationSummary;
+  offerLoading: boolean;
   onRetry: () => void;
-  onOfferAction: (action: { kind: 'accept' | 'decline' | 'counter'; offerId: string; price?: number }) => void;
+  onOfferAction: (action: {
+    kind: 'accept' | 'decline' | 'counter' | 'retract';
+    offerId: string;
+    price?: number;
+    quantity?: number;
+  }) => void;
   onBuyOffer: (offer: OfferPayload) => void;
 }) {
+  const metaText =
+    message.localStatus === 'sending'
+      ? 'Sending...'
+      : message.localStatus === 'failed'
+        ? 'Failed'
+        : message.status === 'READ'
+          ? 'Read'
+          : 'Sent';
   return (
-    <div className={cn('flex', own ? 'justify-end' : 'justify-start')}>
+    <div
+      className={cn(
+        'flex w-full flex-col',
+        own ? 'items-end' : 'items-start',
+        compactWithPrevious ? 'mt-[-0.25rem]' : 'mt-2',
+      )}
+    >
+      {!compactWithPrevious && (
+        <p
+          className={cn(
+            'mb-1 px-1 text-xs font-semibold text-muted',
+            own ? 'text-right' : 'text-left',
+          )}
+        >
+          {senderLabel}
+        </p>
+      )}
       {message.type === 'OFFER' && message.offer ? (
         <OfferCard
           offer={message.offer}
           conversation={conversation}
           own={own}
+          loading={offerLoading}
           onAction={onOfferAction}
           onBuy={onBuyOffer}
         />
       ) : (
         <div
           className={cn(
-            'max-w-[80%] rounded-lg px-3 py-2 text-sm',
-            own ? 'bg-primary text-white' : 'border border-border bg-surface text-text',
+            'max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[72%]',
+            own
+              ? 'rounded-br-md bg-primary text-white'
+              : 'rounded-bl-md border border-border bg-surface text-text',
           )}
         >
-          {message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>}
+          {message.content && (
+            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          )}
           {message.attachments.length > 0 && (
-            <AttachmentList attachments={message.attachments} />
+            <AttachmentList attachments={message.attachments} own={own} />
           )}
           {message.type === 'SYSTEM' ? (
             <p className="text-muted">{message.content}</p>
           ) : null}
-          <div className={cn('mt-1 flex items-center justify-end gap-2 text-[11px]', own ? 'text-white/75' : 'text-muted')}>
-            <span>{message.localStatus === 'sending' ? 'Sending' : message.localStatus === 'failed' ? 'Failed' : message.status === 'READ' ? 'Read' : 'Sent'}</span>
+          <div
+            className={cn(
+              'mt-1.5 flex items-center gap-2 text-[11px]',
+              own ? 'justify-end text-white/75' : 'justify-start text-muted',
+            )}
+          >
+            <span>
+              {formatMessageTime(message.createdAt)}
+              {own ? ` ${metaText}` : ''}
+            </span>
             {message.localStatus === 'failed' && (
-              <button type="button" onClick={onRetry} className="font-semibold underline">
+              <button
+                type="button"
+                onClick={onRetry}
+                className="font-semibold underline"
+              >
                 Retry
               </button>
             )}
@@ -614,24 +1019,36 @@ function MessageBubble({
   );
 }
 
-function AttachmentList({ attachments }: { attachments: MessageAttachment[] }) {
+function AttachmentList({
+  attachments,
+  own,
+}: {
+  attachments: MessageAttachment[];
+  own: boolean;
+}) {
   const [preview, setPreview] = useState<MessageAttachment | null>(null);
   return (
     <>
       <div className="mt-2 flex max-w-full flex-wrap gap-2">
         {attachments.map((attachment, index) =>
-          attachment.type === 'IMAGE' || attachment.mimeType.startsWith('image/') ? (
+          attachment.type === 'IMAGE' ||
+          attachment.mimeType.startsWith('image/') ? (
             <button
               key={`${attachment.url}-${index}`}
               type="button"
               onClick={() => attachment.url && setPreview(attachment)}
-              className="overflow-hidden rounded-md border border-white/20 bg-black/5"
+              className={cn(
+                'overflow-hidden rounded-lg border',
+                own
+                  ? 'border-white/20 bg-white/10'
+                  : 'border-border bg-surface-2',
+              )}
             >
               <img
                 src={attachment.url}
                 alt={attachment.fileName || 'Image attachment'}
                 loading="lazy"
-                className="h-28 w-28 object-cover"
+                className="h-28 w-28 object-cover sm:h-32 sm:w-32"
               />
             </button>
           ) : (
@@ -640,21 +1057,42 @@ function AttachmentList({ attachments }: { attachments: MessageAttachment[] }) {
               href={attachment.url}
               target="_blank"
               rel="noreferrer"
-              className="flex min-w-[220px] max-w-full flex-col gap-1 rounded-md border border-border bg-surface p-3 text-text"
+              className={cn(
+                'flex min-w-[220px] max-w-full flex-col gap-1 rounded-lg border p-3',
+                own
+                  ? 'border-white/20 bg-white/10 text-white'
+                  : 'border-border bg-surface text-text',
+              )}
             >
               <span className="flex min-w-0 items-center gap-2 font-semibold">
                 <Icon variant="icon-package" size={16} />
-                <span className="truncate">{attachment.fileName || 'File attachment'}</span>
+                <span className="truncate">
+                  {attachment.fileName || 'File attachment'}
+                </span>
               </span>
-              <span className="text-xs text-muted">
+              <span
+                className={cn('text-xs', own ? 'text-white/75' : 'text-muted')}
+              >
                 {fileKind(attachment)} · {formatBytes(attachment.size)}
               </span>
-              <span className="text-xs font-semibold text-primary">View / Download</span>
+              <span
+                className={cn(
+                  'text-xs font-semibold',
+                  own ? 'text-white' : 'text-primary',
+                )}
+              >
+                View / Download
+              </span>
             </a>
           ),
         )}
       </div>
-      <Modal open={!!preview} onClose={() => setPreview(null)} title={preview?.fileName || 'Image preview'} size="lg">
+      <Modal
+        open={!!preview}
+        onClose={() => setPreview(null)}
+        title={preview?.fileName || 'Image preview'}
+        size="lg"
+      >
         {preview && (
           <img
             src={preview.url}
@@ -668,7 +1106,11 @@ function AttachmentList({ attachments }: { attachments: MessageAttachment[] }) {
 }
 
 function fileKind(attachment: MessageAttachment) {
-  return (attachment.fileName?.split('.').pop() || attachment.mimeType || 'file').toUpperCase();
+  return (
+    attachment.fileName?.split('.').pop() ||
+    attachment.mimeType ||
+    'file'
+  ).toUpperCase();
 }
 
 function formatBytes(size?: number) {
@@ -682,60 +1124,192 @@ function OfferCard({
   offer,
   conversation,
   own,
+  loading,
   onAction,
   onBuy,
 }: {
   offer: OfferPayload;
   conversation: ConversationSummary;
   own: boolean;
-  onAction: (action: { kind: 'accept' | 'decline' | 'counter'; offerId: string; price?: number }) => void;
+  loading: boolean;
+  onAction: (action: {
+    kind: 'accept' | 'decline' | 'counter' | 'retract';
+    offerId: string;
+    price?: number;
+    quantity?: number;
+  }) => void;
   onBuy: (offer: OfferPayload) => void;
 }) {
   const [counterOpen, setCounterOpen] = useState(false);
+  const [retractOpen, setRetractOpen] = useState(false);
   const [counter, setCounter] = useState('');
-  const canAct = conversation.type === 'PRE_PURCHASE' && offer.status === 'PENDING' && !own;
-  const canBuy =
-    conversation.type === 'PRE_PURCHASE' &&
-    offer.status === 'ACCEPTED' &&
-    conversation.role === 'BUYER';
+  const [counterQuantity, setCounterQuantity] = useState(
+    String(offer.quantity ?? 1),
+  );
+  const canAct = offer.status === 'PENDING' && !own;
+  const canRetract = offer.status === 'PENDING' && own;
+  const canBuy = offer.status === 'ACCEPTED' && conversation.role === 'BUYER';
   const orderId = offer.orderId ?? conversation.orderId;
 
   useEffect(() => {
     if (offer.status !== 'PENDING') setCounterOpen(false);
   }, [offer.status]);
 
+  const isCounter = Boolean(offer.parentOfferId);
+  const displayStatus =
+    offer.status === 'WITHDRAWN' ? 'RETRACTED' : offer.status;
+  const proposalLabel = isCounter ? 'counteroffer' : 'offer';
+  const senderLabel =
+    String(offer.createdBy) === String(offer.buyerId) ? 'buyer' : 'seller';
+  const senderBadge = own
+    ? 'You'
+    : senderLabel === 'buyer'
+      ? 'Buyer'
+      : 'Seller';
+  const mutedText = own ? 'text-white/75' : 'text-muted';
+  const strongText = own ? 'text-white' : 'text-text';
+  const priceText = own ? 'text-white' : undefined;
+  const quantity = offer.quantity ?? 1;
+  const unitPrice = offer.offerPrice ?? offer.amount ?? 0;
+
   return (
-    <div className="w-full max-w-md rounded-lg border border-border bg-surface p-4 text-sm text-text">
-      <p className="font-semibold">{own ? 'You sent an offer' : 'Offer received'}</p>
-      <p className="mt-2 font-medium">{conversation.product.title}</p>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <span className="text-muted">Original</span>
-        <Price cents={offer.originalPrice} />
-        <span className="text-muted">Offer</span>
-        <Price cents={offer.offerPrice ?? offer.amount ?? 0} />
+    <div
+      className={cn(
+        'w-full max-w-md rounded-2xl border p-4 text-sm shadow-sm',
+        own
+          ? 'rounded-br-md border-primary bg-primary text-white'
+          : 'rounded-bl-md border-border bg-surface text-text',
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <p className="font-semibold">
+          {offer.status === 'WITHDRAWN'
+            ? `${isCounter ? 'Counteroffer' : 'Offer'} retracted`
+            : own
+              ? `Your ${proposalLabel}`
+              : `${isCounter ? 'Counteroffer' : 'Offer'} received`}
+        </p>
+        <span
+          className={cn(
+            'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase',
+            own ? 'bg-white/15 text-white' : 'bg-surface-2 text-muted',
+          )}
+        >
+          {senderBadge}
+        </span>
       </div>
-      <p className="mt-3 w-fit rounded-full bg-surface-2 px-2 py-1 text-xs font-bold">{offer.status}</p>
+      <p className={cn('mt-2 font-medium', strongText)}>
+        {conversation.product.title}
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <span className={mutedText}>Original</span>
+        <span>
+          <Price cents={offer.originalPrice} className={priceText} /> each
+        </span>
+        <span className={mutedText}>Offer</span>
+        <span>
+          <Price cents={unitPrice} className={priceText} /> each
+        </span>
+        {quantity > 1 && (
+          <>
+            <span className={mutedText}>Quantity</span>
+            <span className={strongText}>{quantity}</span>
+            <span className={mutedText}>Total</span>
+            <Price cents={unitPrice * quantity} className={priceText} />
+          </>
+        )}
+      </div>
+      <p
+        className={cn(
+          'mt-3 w-fit rounded-full px-2 py-1 text-xs font-bold',
+          own ? 'bg-white/15 text-white' : 'bg-surface-2 text-text',
+        )}
+      >
+        {displayStatus}
+      </p>
+      {offer.status === 'PENDING' && own && (
+        <p className={cn('mt-2 text-sm', mutedText)}>
+          Awaiting {conversation.role === 'BUYER' ? 'seller' : 'buyer'}{' '}
+          response.
+        </p>
+      )}
+      {offer.status === 'WITHDRAWN' && (
+        <p className={cn('mt-2 text-sm', mutedText)}>
+          Retracted by {senderLabel}. This proposal is no longer actionable.
+        </p>
+      )}
       {canAct && (
         <div className="mt-4 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onAction({ kind: 'accept', offerId: offer.id })}>Accept</Button>
-          <Button size="sm" variant="secondary" onClick={() => setCounterOpen(true)}>Counter</Button>
-          <Button size="sm" variant="danger" onClick={() => onAction({ kind: 'decline', offerId: offer.id })}>Decline</Button>
+          <Button
+            size="sm"
+            loading={loading}
+            onClick={() => onAction({ kind: 'accept', offerId: offer.id })}
+          >
+            Accept
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={loading}
+            onClick={() => setCounterOpen(true)}
+          >
+            Counter
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            loading={loading}
+            onClick={() => onAction({ kind: 'decline', offerId: offer.id })}
+          >
+            Decline
+          </Button>
+        </div>
+      )}
+      {canRetract && (
+        <div className="mt-4">
+          <Button
+            size="sm"
+            variant="danger"
+            loading={loading}
+            onClick={() => setRetractOpen(true)}
+          >
+            Retract {proposalLabel}
+          </Button>
         </div>
       )}
       {offer.status === 'ACCEPTED' && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <p className="text-sm font-semibold text-success">Offer accepted. Accepted price: <Price cents={offer.offerPrice ?? offer.amount ?? 0} /></p>
+          <p
+            className={cn(
+              'text-sm font-semibold',
+              own ? 'text-white' : 'text-success',
+            )}
+          >
+            Offer accepted. Accepted price:{' '}
+            <Price cents={unitPrice} className={priceText} /> each
+          </p>
           {canBuy && (
-            <Button size="sm" onClick={() => onBuy(offer)}>Buy at offer price</Button>
+            <Button size="sm" onClick={() => onBuy(offer)}>
+              Buy at offer price
+            </Button>
           )}
         </div>
       )}
       {offer.status === 'PURCHASED' && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <p className="text-sm font-semibold text-success">Purchased at <Price cents={offer.offerPrice ?? offer.amount ?? 0} /></p>
+          <p
+            className={cn(
+              'text-sm font-semibold',
+              own ? 'text-white' : 'text-success',
+            )}
+          >
+            Purchased at <Price cents={unitPrice} className={priceText} /> each
+          </p>
           {orderId && (
             <Link to={paths.order(orderId)}>
-              <Button size="sm" variant="secondary">View Order</Button>
+              <Button size="sm" variant="secondary">
+                View Order
+              </Button>
             </Link>
           )}
         </div>
@@ -746,13 +1320,20 @@ function OfferCard({
         title="Counter offer"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setCounterOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => setCounterOpen(false)}>
+              Cancel
+            </Button>
             <Button
               onClick={() => {
-                onAction({ kind: 'counter', offerId: offer.id, price: Number(counter) });
+                onAction({
+                  kind: 'counter',
+                  offerId: offer.id,
+                  price: Number(counter),
+                  quantity: Number(counterQuantity),
+                });
                 setCounterOpen(false);
               }}
-              disabled={!Number(counter)}
+              disabled={!Number(counter) || !Number(counterQuantity)}
             >
               Submit Counter
             </Button>
@@ -760,8 +1341,65 @@ function OfferCard({
         }
       >
         <div className="flex flex-col gap-3">
-          <p className="text-muted">Current offer: <Price cents={offer.offerPrice ?? offer.amount ?? 0} /></p>
-          <Input type="number" min={1} label="Counter" value={counter} onChange={(e) => setCounter(e.target.value)} />
+          <p className="text-muted">
+            Current offer: <Price cents={unitPrice} /> each
+          </p>
+          <Input
+            type="number"
+            min={1}
+            label="Counter"
+            value={counter}
+            onChange={(e) => setCounter(e.target.value)}
+          />
+          {(conversation.product.stock ?? 1) > 1 && (
+            <Input
+              type="number"
+              min={1}
+              max={
+                conversation.role === 'SELLER'
+                  ? quantity
+                  : (conversation.product.stock ?? quantity)
+              }
+              label="Quantity"
+              value={counterQuantity}
+              onChange={(e) => setCounterQuantity(e.target.value)}
+            />
+          )}
+          <p className="text-sm text-muted">
+            Counter total:{' '}
+            <Price
+              cents={Number(counter || 0) * Number(counterQuantity || 1)}
+            />
+          </p>
+        </div>
+      </Modal>
+      <Modal
+        open={retractOpen}
+        onClose={() => setRetractOpen(false)}
+        title={`Retract this ${proposalLabel}?`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRetractOpen(false)}>
+              Keep {proposalLabel}
+            </Button>
+            <Button
+              variant="danger"
+              loading={loading}
+              onClick={() => {
+                onAction({ kind: 'retract', offerId: offer.id });
+                setRetractOpen(false);
+              }}
+            >
+              Retract {proposalLabel}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-muted">
+            The amount <Price cents={unitPrice} /> will stay in the conversation
+            history, but the other user will no longer be able to accept it.
+          </p>
         </div>
       </Modal>
     </div>
@@ -774,6 +1412,8 @@ function Composer({
   onTyping,
   canOffer,
   onMakeOffer,
+  productStock,
+  productPrice,
   offerLoading,
   sending,
 }: {
@@ -786,7 +1426,9 @@ function Composer({
   ) => void;
   onTyping: () => void;
   canOffer: boolean;
-  onMakeOffer: (price: number) => void;
+  onMakeOffer: (price: number, quantity: number) => void;
+  productStock: number;
+  productPrice: number;
   offerLoading: boolean;
   sending: boolean;
 }) {
@@ -794,6 +1436,7 @@ function Composer({
   const [copy, setCopy] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const [offerPrice, setOfferPrice] = useState('');
+  const [offerQuantity, setOfferQuantity] = useState('1');
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -840,7 +1483,9 @@ function Composer({
       accepted.push({
         id: crypto.randomUUID(),
         file,
-        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+        previewUrl: file.type.startsWith('image/')
+          ? URL.createObjectURL(file)
+          : null,
         type: file.type.startsWith('image/') ? 'IMAGE' : 'FILE',
       });
     }
@@ -859,17 +1504,28 @@ function Composer({
     setAttachments([]);
   };
   return (
-    <footer className="border-t border-border bg-surface p-3">
+    <footer className="border-t border-border bg-surface px-4 py-3">
       {attachments.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-2">
           {attachments.map((attachment) => (
-            <div key={attachment.id} className="relative rounded-md border border-border bg-surface-2 p-2">
+            <div
+              key={attachment.id}
+              className="relative rounded-md border border-border bg-surface-2 p-2"
+            >
               {attachment.previewUrl ? (
-                <img src={attachment.previewUrl} alt={attachment.file.name} className="h-16 w-16 rounded object-cover" />
+                <img
+                  src={attachment.previewUrl}
+                  alt={attachment.file.name}
+                  className="h-16 w-16 rounded object-cover"
+                />
               ) : (
                 <div className="flex h-16 w-40 flex-col justify-center rounded bg-surface px-2 text-xs text-text">
-                  <span className="truncate font-semibold">{attachment.file.name}</span>
-                  <span className="text-muted">{formatBytes(attachment.file.size)}</span>
+                  <span className="truncate font-semibold">
+                    {attachment.file.name}
+                  </span>
+                  <span className="text-muted">
+                    {formatBytes(attachment.file.size)}
+                  </span>
                 </div>
               )}
               <button
@@ -884,7 +1540,9 @@ function Composer({
           ))}
         </div>
       )}
-      {attachmentError && <p className="mb-2 text-sm text-danger">{attachmentError}</p>}
+      {attachmentError && (
+        <p className="mb-2 text-sm text-danger">{attachmentError}</p>
+      )}
       <div className="flex items-end gap-2">
         <input
           ref={inputRef}
@@ -901,38 +1559,60 @@ function Composer({
           type="button"
           variant="secondary"
           size="md"
-          disabled={disabled || sending || attachments.length >= MAX_ATTACHMENTS}
+          disabled={
+            disabled || sending || attachments.length >= MAX_ATTACHMENTS
+          }
           onClick={() => inputRef.current?.click()}
           title="Attach files"
         >
           <Icon variant="icon-package" size={18} />
         </Button>
-        <Textarea
-          rows={2}
-          value={content}
-          disabled={disabled}
-          placeholder="Type a message..."
-          onChange={(e) => {
-            setContent(e.target.value);
-            onTyping();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          className="min-h-[48px] resize-none"
-        />
-        <Button onClick={submit} disabled={(!content.trim() && attachments.length === 0) || disabled || sending} loading={sending}>Send</Button>
+        <div className="min-w-0 flex-1">
+          <Textarea
+            rows={2}
+            value={content}
+            disabled={disabled}
+            placeholder="Type a message..."
+            onChange={(e) => {
+              setContent(e.target.value);
+              onTyping();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            className="min-h-[48px] resize-none rounded-lg"
+          />
+        </div>
+        <Button
+          onClick={submit}
+          disabled={
+            (!content.trim() && attachments.length === 0) || disabled || sending
+          }
+          loading={sending}
+          className="h-12 shrink-0"
+        >
+          Send
+        </Button>
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <label className="flex items-center gap-2 text-sm text-muted">
-          <input type="checkbox" checked={copy} onChange={(e) => setCopy(e.target.checked)} />
+        <label className="flex items-center gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={copy}
+            onChange={(e) => setCopy(e.target.checked)}
+          />
           Send a copy to my email
         </label>
         {canOffer && (
-          <Button size="sm" variant="secondary" onClick={() => setOfferOpen(true)} loading={offerLoading}>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setOfferOpen(true)}
+            loading={offerLoading}
+          >
             <Icon variant="icon-tag" size={14} />
             Make Offer
           </Button>
@@ -944,21 +1624,49 @@ function Composer({
         title="Make offer"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOfferOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => setOfferOpen(false)}>
+              Cancel
+            </Button>
             <Button
               onClick={() => {
-                onMakeOffer(Number(offerPrice));
+                onMakeOffer(Number(offerPrice), Number(offerQuantity));
                 setOfferOpen(false);
                 setOfferPrice('');
+                setOfferQuantity('1');
               }}
-              disabled={!Number(offerPrice)}
+              disabled={!Number(offerPrice) || !Number(offerQuantity)}
             >
               Submit Offer
             </Button>
           </>
         }
       >
-        <Input type="number" min={1} label="Your offer" value={offerPrice} onChange={(e) => setOfferPrice(e.target.value)} />
+        <div className="flex flex-col gap-3">
+          {productStock > 1 && (
+            <Input
+              type="number"
+              min={1}
+              max={productStock}
+              label="Quantity"
+              value={offerQuantity}
+              onChange={(e) => setOfferQuantity(e.target.value)}
+            />
+          )}
+          <Input
+            type="number"
+            min={1}
+            max={Math.max(1, productPrice - 1)}
+            label="Offer price per item"
+            value={offerPrice}
+            onChange={(e) => setOfferPrice(e.target.value)}
+          />
+          <p className="text-sm text-muted">
+            Offer total:{' '}
+            <Price
+              cents={Number(offerPrice || 0) * Number(offerQuantity || 1)}
+            />
+          </p>
+        </div>
       </Modal>
     </footer>
   );

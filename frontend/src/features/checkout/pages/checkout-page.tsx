@@ -29,6 +29,7 @@ export default function CheckoutPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const offerId = searchParams.get('offerId') ?? undefined;
+  const offerProductId = searchParams.get('productId') ?? undefined;
   const { notify } = useToast();
   const { list: addresses } = useAddresses();
   const placeOrder = usePlaceOrder();
@@ -39,9 +40,13 @@ export default function CheckoutPage() {
   // The server cart drives which items are being checked out.
   const serverCart = useQuery({ queryKey: ['cart'], queryFn: cartApi.get });
   const cartItemIds = useMemo(
-    () => (serverCart.data?.items ?? []).map((i) => i.id),
-    [serverCart.data],
+    () =>
+      (serverCart.data?.items ?? [])
+        .filter((item) => !offerId || !offerProductId || item.productId === offerProductId)
+        .map((item) => item.id),
+    [offerId, offerProductId, serverCart.data],
   );
+  const offerSelectionReady = !offerId || Boolean(offerProductId);
 
   const [addressId, setAddressId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('COD');
@@ -52,7 +57,7 @@ export default function CheckoutPage() {
   const effectiveAddressId = addressId ?? defaultAddressId ?? null;
 
   const previewInput =
-    effectiveAddressId && cartItemIds.length > 0
+    effectiveAddressId && cartItemIds.length > 0 && offerSelectionReady
       ? {
           selectedCartItemIds: cartItemIds,
           addressId: effectiveAddressId,

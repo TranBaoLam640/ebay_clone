@@ -12,6 +12,7 @@ export function AccountLayout() {
   const NAV: { to: string; label: string; icon: IconVariant; end?: boolean }[] = [
     { to: paths.account.profile, label: t('account.navProfile'), icon: 'icon-user' },
     { to: paths.orders, label: t('account.navOrders'), icon: 'icon-package' },
+    { to: paths.messages, label: t('account.navMessages'), icon: 'icon-mail' },
     { to: paths.account.bids, label: t('account.navBids'), icon: 'icon-tag' },
     { to: paths.account.offers, label: t('account.navOffers'), icon: 'icon-gift' },
     { to: paths.account.password, label: t('account.navPassword'), icon: 'icon-shield' },

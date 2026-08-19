@@ -22,6 +22,11 @@ export interface SellerFeedbackRevisionRequest {
   respondedAt?: string;
 }
 
+export interface SellerFeedbackFollowUpComment {
+  commentText: string;
+  createdAt: string;
+}
+
 export interface SellerFeedback {
   id: string;
   orderId?: string;
@@ -37,7 +42,9 @@ export interface SellerFeedback {
   shippingTimeRating?: number | null;
   shippingAndHandlingChargesRating?: number | null;
   images?: SellerFeedbackImage[];
+  followUpComment?: SellerFeedbackFollowUpComment | null;
   sellerResponse?: SellerFeedbackResponse | null;
+  verifiedPurchase?: boolean;
   source: SellerFeedbackSource;
   submittedAt?: string;
   feedbackDeadline?: string;
@@ -85,10 +92,6 @@ export interface SellerFeedbackFields {
   shippingTimeRating?: number;
   shippingAndHandlingChargesRating?: number;
 }
-
-export type SellerFeedbackUpdate = Partial<SellerFeedbackFields> & {
-  commentType?: SellerFeedbackCommentType;
-};
 
 export interface OrderItemSellerFeedbackResult {
   exists: boolean;
@@ -157,11 +160,8 @@ export const sellerFeedbackApi = {
   respondToSellerFeedback: (feedbackId: string, payload: { commentText: string }) =>
     apiMutate<SellerFeedback>('post', `/seller-feedbacks/${feedbackId}/response`, payload),
 
-  updateSellerFeedback: (feedbackId: string, payload: SellerFeedbackUpdate) =>
-    apiMutate<SellerFeedback>('patch', `/seller-feedbacks/${feedbackId}`, payload),
-
-  deleteSellerFeedback: (feedbackId: string) =>
-    apiMutate<{ deleted: boolean }>('delete', `/seller-feedbacks/${feedbackId}`),
+  addSellerFeedbackFollowUp: (feedbackId: string, payload: { commentText: string }) =>
+    apiMutate<SellerFeedback>('post', `/seller-feedbacks/${feedbackId}/follow-up`, payload),
 
   requestSellerFeedbackRevision: (feedbackId: string) =>
     apiMutate<SellerFeedback>('post', `/seller-feedbacks/${feedbackId}/revision-request`, {}),

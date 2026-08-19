@@ -840,7 +840,7 @@ describe('User 2 catalog and reputation', () => {
     );
   });
 
-  it('creates, updates, lists, and deletes owned feedback with aggregates', async () => {
+  it('creates, lists, and rejects direct edits/deletes for owned feedback', async () => {
     const buyer = await login('buyer@example.test');
     const created = await mutate(
       buyer,
@@ -861,6 +861,7 @@ describe('User 2 catalog and reputation', () => {
         productId: String(ids.product),
         rating: 4,
         comment: 'Reliable seller',
+        verifiedPurchase: true,
         buyer: { fullName: 'Buyer One' },
       }),
     );
@@ -874,6 +875,7 @@ describe('User 2 catalog and reputation', () => {
     expect(listed.body.data).toHaveLength(1);
     expect(listed.body.data[0].buyerId).toBeUndefined();
     expect(listed.body.data[0].orderId).toBeUndefined();
+    expect(listed.body.data[0].verifiedPurchase).toBe(true);
 
     const feedbackId = created.body.data.id;
     const updated = await mutate(
@@ -882,10 +884,12 @@ describe('User 2 catalog and reputation', () => {
       `/seller-feedbacks/${feedbackId}`,
       { rating: 2 },
     );
-    expect(updated.status).toBe(200);
-    expect(updated.body.data.rating).toBe(2);
+    expect(updated.status).toBe(409);
+    expect(updated.body.error.message).toBe(
+      'Submitted seller feedback cannot be edited directly',
+    );
     expect(await models.SellerProfile.findById(ids.seller).lean()).toEqual(
-      expect.objectContaining({ averageFeedbackRating: 2, feedbackCount: 1 }),
+      expect.objectContaining({ averageFeedbackRating: 4, feedbackCount: 1 }),
     );
 
     const removed = await mutate(
@@ -893,11 +897,133 @@ describe('User 2 catalog and reputation', () => {
       'delete',
       `/seller-feedbacks/${feedbackId}`,
     );
-    expect(removed.status).toBe(200);
-    expect(removed.body.data).toEqual({ deleted: true });
-    expect(await models.SellerProfile.findById(ids.seller).lean()).toEqual(
-      expect.objectContaining({ averageFeedbackRating: 0, feedbackCount: 0 }),
+    expect(removed.status).toBe(409);
+    expect(removed.body.error.message).toBe(
+      'Submitted seller feedback cannot be deleted directly',
     );
+    expect(await models.SellerProfile.findById(ids.seller).lean()).toEqual(
+      expect.objectContaining({ averageFeedbackRating: 4, feedbackCount: 1 }),
+    );
+  });
+
+  it('adds one immutable buyer follow-up without changing original feedback fields', async () => {
+    const buyer = await login('buyer@example.test');
+    const other = await login('other@example.test');
+    const seller = await login('seller@example.test');
+    const created = await uploadFeedback(
+      buyer,
+      ids.order,
+      ids.orderItem,
+      feedbackInput({
+        commentType: 'NEGATIVE',
+        commentText: 'Original problem',
+        shippingTimeRating: 2,
+      }),
+      [{ name: 'evidence.jpg', mime: 'image/jpeg', size: 32 }],
+    );
+    expect(created.status).toBe(201);
+    const before = await models.SellerFeedback.findById(
+      created.body.data.id,
+    ).lean();
+
+    await mutate(
+      other,
+      'post',
+      `/seller-feedbacks/${created.body.data.id}/follow-up`,
+      { commentText: 'Not my feedback' },
+    ).then(({ status }) => expect(status).toBe(404));
+    await mutate(
+      seller,
+      'post',
+      `/seller-feedbacks/${created.body.data.id}/follow-up`,
+      { commentText: 'Seller cannot add buyer follow-up' },
+    ).then(({ status }) => expect(status).toBe(404));
+
+    const followUp = await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${created.body.data.id}/follow-up`,
+      { commentText: 'Seller later helped resolve it.' },
+    );
+    expect(followUp.status).toBe(201);
+    expect(followUp.body.data.followUpComment).toEqual(
+      expect.objectContaining({
+        commentText: 'Seller later helped resolve it.',
+        createdAt: expect.any(String),
+      }),
+    );
+    expect(followUp.body.data).toEqual(
+      expect.objectContaining({
+        commentType: 'NEGATIVE',
+        commentText: 'Original problem',
+        shippingTimeRating: 2,
+        submittedAt: before.submittedAt.toISOString(),
+      }),
+    );
+    expect(followUp.body.data.images).toHaveLength(1);
+
+    await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${created.body.data.id}/follow-up`,
+      { commentText: 'Second follow-up' },
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe('Follow-up comment already submitted');
+    });
+
+    const listed = await request(app)
+      .get(`${prefix}/sellers/${ids.seller}/feedbacks`)
+      .expect(200);
+    expect(listed.body.data[0].followUpComment.commentText).toBe(
+      'Seller later helped resolve it.',
+    );
+  });
+
+  it('rejects empty, forged, and automated seller feedback follow-ups', async () => {
+    const buyer = await login('buyer@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      `/orders/${ids.order}/items/${ids.orderItem}/seller-feedback`,
+      feedbackInput({ verifiedPurchase: true }),
+    );
+    expect(created.status).toBe(400);
+
+    const manualOrder = await createDeliveredOrderItem();
+    const manual = await mutate(
+      buyer,
+      'post',
+      `/orders/${manualOrder.orderId}/items/${manualOrder.orderItemId}/seller-feedback`,
+      feedbackInput(),
+    );
+    await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${manual.body.data.id}/follow-up`,
+      { commentText: '   ' },
+    ).then(({ status }) => expect(status).toBe(400));
+
+    const automatedOrder = await createDeliveredOrderItem({
+      deliveredAt: new Date(Date.now() - 180_000),
+    });
+    await sellerFeedbackService.processAutomatedPositiveFeedback({
+      now: new Date(),
+    });
+    const automated = await models.SellerFeedback.findOne({
+      orderItemId: automatedOrder.orderItemId,
+    }).lean();
+    await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${automated._id}/follow-up`,
+      { commentText: 'Buyer should replace automated first' },
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Automated feedback cannot receive a buyer follow-up',
+      );
+    });
   });
 
   it('keeps the legacy seller-feedback endpoint safe for single-item and multi-item orders', async () => {
@@ -1473,6 +1599,12 @@ describe('User 2 catalog and reputation', () => {
       feedbackInput({ commentType: 'NEGATIVE', commentText: 'Problem' }),
     );
     await mutate(
+      buyer,
+      'post',
+      `/seller-feedbacks/${feedback.body.data.id}/follow-up`,
+      { commentText: 'Follow-up before revision.' },
+    ).then(({ status }) => expect(status).toBe(201));
+    await mutate(
       seller,
       'post',
       `/seller-feedbacks/${feedback.body.data.id}/revision-request`,
@@ -1541,6 +1673,9 @@ describe('User 2 catalog and reputation', () => {
       }),
     );
     expect(cleanAccepted.body.data.revisionRequest.status).toBe('ACCEPTED');
+    expect(cleanAccepted.body.data.followUpComment.commentText).toBe(
+      'Follow-up before revision.',
+    );
 
     await mutate(
       seller,
@@ -1860,14 +1995,14 @@ describe('User 2 catalog and reputation', () => {
     }).then(({ status, body }) => {
       expect(status).toBe(409);
       expect(body.error.message).toBe(
-        'Automated feedback cannot be edited directly',
+        'Submitted seller feedback cannot be edited directly',
       );
     });
     await mutate(buyer, 'delete', `/seller-feedbacks/${autoOnly._id}`).then(
       ({ status, body }) => {
         expect(status).toBe(409);
         expect(body.error.message).toBe(
-          'Automated feedback cannot be deleted directly',
+          'Submitted seller feedback cannot be deleted directly',
         );
       },
     );
@@ -1904,7 +2039,7 @@ describe('User 2 catalog and reputation', () => {
     }).then(({ status }) => expect(status).toBe(400));
   });
 
-  it('accepts optional feedback images and deletes them when feedback is removed', async () => {
+  it('accepts optional feedback images and rejects public feedback removal', async () => {
     const buyer = await login('buyer@example.test');
     const created = await uploadFeedback(
       buyer,
@@ -1937,13 +2072,14 @@ describe('User 2 catalog and reputation', () => {
       buyer,
       'delete',
       `/seller-feedbacks/${created.body.data.id}`,
-    ).then(({ status }) => expect(status).toBe(200));
-    const deleteKeys = storageSend.mock.calls
-      .map(([command]) => command.input)
-      .filter((input) => !input.Body)
-      .map((input) => input.Key);
-    expect(deleteKeys.sort()).toEqual(putKeys.sort());
-    expect(await models.SellerFeedback.countDocuments()).toBe(0);
+    ).then(({ status, body }) => {
+      expect(status).toBe(409);
+      expect(body.error.message).toBe(
+        'Submitted seller feedback cannot be deleted directly',
+      );
+    });
+    expect(storageSend).not.toHaveBeenCalled();
+    expect(await models.SellerFeedback.countDocuments()).toBe(1);
   });
 
   it('cleans up feedback images when upload or duplicate creation fails', async () => {
@@ -2088,7 +2224,7 @@ describe('User 2 catalog and reputation', () => {
       });
   });
 
-  it('updates canonical seller feedback fields without image editing', async () => {
+  it('rejects public canonical seller feedback edits', async () => {
     const buyer = await login('buyer@example.test');
     const created = await mutate(
       buyer,
@@ -2108,15 +2244,9 @@ describe('User 2 catalog and reputation', () => {
         shippingAndHandlingChargesRating: 3,
       },
     );
-    expect(updated.status).toBe(200);
-    expect(updated.body.data).toEqual(
-      expect.objectContaining({
-        commentType: 'NEGATIVE',
-        commentText: 'Updated transaction feedback',
-        shippingTimeRating: 2,
-        shippingAndHandlingChargesRating: 3,
-        images: [],
-      }),
+    expect(updated.status).toBe(409);
+    expect(updated.body.error.message).toBe(
+      'Submitted seller feedback cannot be edited directly',
     );
   });
 

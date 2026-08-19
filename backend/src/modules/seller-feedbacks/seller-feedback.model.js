@@ -73,6 +73,10 @@ const sellerFeedbackSchema = new mongoose.Schema(
       commentText: { type: String, trim: true, maxlength: 500 },
       createdAt: Date,
     },
+    followUpComment: {
+      commentText: { type: String, trim: true, maxlength: 500 },
+      createdAt: Date,
+    },
     revisionRequest: {
       status: {
         type: String,

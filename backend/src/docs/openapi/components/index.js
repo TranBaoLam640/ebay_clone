@@ -92,6 +92,7 @@ export const operation = ({
   successStatus = 200,
   errors = [400, 429, 500],
   security: operationSecurity,
+  deprecated = false,
 }) => ({
   tags: [tag],
   operationId,
@@ -114,6 +115,7 @@ export const operation = ({
       ].map((status) => [status, error(status)]),
     ),
   },
+  ...(deprecated && { deprecated }),
   security: operationSecurity ?? [],
 });
 export const collection = (name) => ({ type: 'array', items: ref(name) });

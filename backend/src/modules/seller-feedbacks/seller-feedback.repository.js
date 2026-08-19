@@ -25,6 +25,7 @@ const publicPipeline = (includeTransaction = false) => [
       commentType: 1,
       commentText: 1,
       comment: '$commentText',
+      verifiedPurchase: { $literal: true },
       source: { $ifNull: ['$source', 'BUYER'] },
       submittedAt: { $ifNull: ['$submittedAt', '$createdAt'] },
       rating: 1,
@@ -34,6 +35,7 @@ const publicPipeline = (includeTransaction = false) => [
       shippingAndHandlingChargesRating: 1,
       shippingRating: 1,
       images: 1,
+      followUpComment: 1,
       sellerResponse: 1,
       revisionRequest: {
         $cond: [
@@ -121,6 +123,18 @@ export const respondOnce = (_id, sellerId, commentText, session) =>
       sellerResponse: { $exists: false },
     },
     { $set: { sellerResponse: { commentText, createdAt: new Date() } } },
+    { returnDocument: 'after', runValidators: true, session },
+  );
+
+export const addFollowUp = (_id, buyerId, commentText, now, session) =>
+  SellerFeedback.findOneAndUpdate(
+    {
+      _id,
+      buyerId,
+      source: 'BUYER',
+      followUpComment: { $exists: false },
+    },
+    { $set: { followUpComment: { commentText, createdAt: now } } },
     { returnDocument: 'after', runValidators: true, session },
   );
 

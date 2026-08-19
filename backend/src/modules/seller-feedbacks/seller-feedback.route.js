@@ -5,6 +5,7 @@ import { feedbackImages } from '../uploads/upload.middleware.js';
 import * as controller from './seller-feedback.controller.js';
 import {
   awaitingSellerFeedbackSchema,
+  addSellerFeedbackFollowUpSchema,
   createFeedbackRevisionRequestSchema,
   createOrderItemSellerFeedbackSchema,
   createSellerFeedbackSchema,
@@ -67,6 +68,13 @@ sellerFeedbackRoute.post(
   authenticate,
   validate(respondToSellerFeedbackSchema),
   controller.respond,
+);
+
+sellerFeedbackRoute.post(
+  '/:feedbackId/follow-up',
+  authenticate,
+  validate(addSellerFeedbackFollowUpSchema),
+  controller.addFollowUp,
 );
 
 sellerFeedbackRoute.post(

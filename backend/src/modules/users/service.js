@@ -1,11 +1,12 @@
 import * as repo from './repository.js';
 import * as authRepository from '../auth/repository.js';
 import * as notificationService from '../notifications/service.js';
+import * as sellerRepository from '../sellers/seller.repository.js';
 import { verifyPassword, hashPassword } from '../../common/utils/hash.js';
 import { AppError } from '../../common/errors/app-error.js';
 import { ERROR_CODES } from '../../common/constants/error-codes.js';
 
-const toUserView = (user) => {
+const toUserView = (user, sellerProfile = null) => {
   if (!user) return null;
   const source = typeof user.toObject === 'function' ? user.toObject() : user;
   return {
@@ -19,15 +20,31 @@ const toUserView = (user) => {
     isEmailVerified: source.isEmailVerified,
     emailVerifiedAt: source.emailVerifiedAt ?? null,
     lastLoginAt: source.lastLoginAt ?? null,
+    sellerProfile: sellerProfile
+      ? {
+          id: String(sellerProfile._id),
+        }
+      : null,
     createdAt: source.createdAt,
     updatedAt: source.updatedAt,
   };
 };
 
-export const getProfile = async (id) => toUserView(await repo.findById(id));
+export const getProfile = async (id) => {
+  const [user, sellerProfile] = await Promise.all([
+    repo.findById(id),
+    sellerRepository.findByUserId(id),
+  ]);
+  return toUserView(user, sellerProfile);
+};
 export const getAuthenticatedUser = (id) => repo.findById(id);
-export const updateProfile = async (id, data) =>
-  toUserView(await repo.updateById(id, data));
+export const updateProfile = async (id, data) => {
+  const [user, sellerProfile] = await Promise.all([
+    repo.updateById(id, data),
+    sellerRepository.findByUserId(id),
+  ]);
+  return toUserView(user, sellerProfile);
+};
 export const changePassword = async (id, { currentPassword, newPassword }) => {
   const profile = await repo.findById(id);
   if (!profile)

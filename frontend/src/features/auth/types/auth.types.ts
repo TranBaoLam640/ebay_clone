@@ -13,6 +13,7 @@ export interface User {
   isEmailVerified: boolean;
   emailVerifiedAt: string | null;
   lastLoginAt: string | null;
+  sellerProfile: { id: string } | null;
   createdAt: string;
   updatedAt: string;
 }

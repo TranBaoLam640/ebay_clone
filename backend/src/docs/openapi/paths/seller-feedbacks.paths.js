@@ -132,23 +132,43 @@ export const sellerFeedbackPaths = {
     patch: operation({
       tag: 'Seller Feedback',
       operationId: 'updateSellerFeedback',
-      summary: 'Update seller feedback',
+      summary: 'Rejected direct seller feedback edit',
       description:
-        'Buyer-owned manual feedback update. AUTOMATED feedback cannot be edited directly; submit normal leave-feedback for the order item to replace it. Pending revision requests block ordinary PATCH.',
+        'Deprecated public route. Submitted BUYER feedback is immutable and cannot be edited directly; revision ACCEPT remains the supported path for changing canonical feedback fields.',
+      deprecated: true,
       parameters: [idParam('feedbackId')],
       requestBody: body({
         $ref: '#/components/schemas/UpdateSellerFeedbackRequest',
       }),
-      success: response('Seller feedback updated', ref('SellerFeedback')),
-      errors: [400, 401, 403, 404, 413, 429, 500],
+      errors: [400, 401, 404, 409, 413, 429, 500],
       security: security.unsafe,
     }),
     delete: operation({
       tag: 'Seller Feedback',
       operationId: 'deleteSellerFeedback',
-      summary: 'Delete seller feedback',
+      summary: 'Rejected direct seller feedback delete',
+      description:
+        'Deprecated public route. Submitted BUYER feedback cannot be deleted directly.',
+      deprecated: true,
       parameters: [idParam('feedbackId')],
-      errors: [400, 401, 403, 404, 429, 500],
+      errors: [400, 401, 404, 409, 429, 500],
+      security: security.unsafe,
+    }),
+  },
+  '/seller-feedbacks/{feedbackId}/follow-up': {
+    post: operation({
+      tag: 'Seller Feedback',
+      operationId: 'addSellerFeedbackFollowUp',
+      summary: 'Add a buyer follow-up comment',
+      description:
+        'Buyer-only one-time follow-up for submitted BUYER feedback. It is immutable, text-only, separate from revision, and does not change commentType, original commentText, DSR, images, submittedAt, or revision state.',
+      parameters: [idParam('feedbackId')],
+      requestBody: body({
+        $ref: '#/components/schemas/SellerFeedbackFollowUpRequest',
+      }),
+      success: response('Follow-up comment created', ref('SellerFeedback')),
+      successStatus: 201,
+      errors: [400, 401, 404, 409, 429, 500],
       security: security.unsafe,
     }),
   },

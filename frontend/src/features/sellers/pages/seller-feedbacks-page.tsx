@@ -11,9 +11,9 @@ import { SellerFeedbackDetail } from '../components/seller-feedback-detail';
 
 export default function SellerFeedbacksPage() {
   const { t } = useTranslation();
-  const { isLoading } = useAuth();
+  const { user, isLoading } = useAuth();
   const [page, setPage] = useState(1);
-  const sellerId = undefined;
+  const sellerId = user?.sellerProfile?.id;
   const feedbacks = useSellerFeedbacks(sellerId, { page, limit: 10 });
   const summary = useSellerFeedbackSummary(sellerId);
 

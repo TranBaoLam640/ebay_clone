@@ -34,52 +34,24 @@ export function SellerFeedbackDetail({
   const { t } = useTranslation();
   const { notify } = useToast();
   const mutations = useSellerFeedbackMutations();
-  const [editOpen, setEditOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [respondOpen, setRespondOpen] = useState(false);
+  const [followUpOpen, setFollowUpOpen] = useState(false);
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [declineOpen, setDeclineOpen] = useState(false);
   const [responseText, setResponseText] = useState('');
+  const [followUpText, setFollowUpText] = useState('');
 
   const revision = feedback.revisionRequest;
   const pendingRevision = revision?.status === 'PENDING';
-  const buyerEditable = buyerActions && feedback.source === 'BUYER' && !pendingRevision;
+  const canFollowUp =
+    buyerActions &&
+    feedback.source === 'BUYER' &&
+    !feedback.followUpComment;
   const sellerCanRequestRevision =
     sellerActions &&
     feedback.source === 'BUYER' &&
     !revision &&
     ['NEUTRAL', 'NEGATIVE'].includes(feedback.commentType);
-
-  const submitEdit = async (value: SellerFeedbackValue) => {
-    try {
-      await mutations.update.mutateAsync({
-        feedbackId: feedback.id,
-        payload: toPatchPayload(value),
-        orderId: feedback.orderId,
-        orderItemId: feedback.orderItemId,
-        sellerId: feedback.sellerId,
-      });
-      notify(t('sellerFeedback.updatedToast'), 'success');
-      setEditOpen(false);
-    } catch (err) {
-      notify(messageFromError(err), 'error');
-    }
-  };
-
-  const submitDelete = async () => {
-    try {
-      await mutations.remove.mutateAsync({
-        feedbackId: feedback.id,
-        orderId: feedback.orderId,
-        orderItemId: feedback.orderItemId,
-        sellerId: feedback.sellerId,
-      });
-      notify(t('sellerFeedback.deletedToast'), 'success');
-      setDeleteOpen(false);
-    } catch (err) {
-      notify(messageFromError(err), 'error');
-    }
-  };
 
   const submitResponse = async () => {
     try {
@@ -91,6 +63,23 @@ export function SellerFeedbackDetail({
       notify(t('sellerFeedback.respondedToast'), 'success');
       setResponseText('');
       setRespondOpen(false);
+    } catch (err) {
+      notify(messageFromError(err), 'error');
+    }
+  };
+
+  const submitFollowUp = async () => {
+    try {
+      await mutations.addFollowUp.mutateAsync({
+        feedbackId: feedback.id,
+        commentText: followUpText.trim(),
+        orderId: feedback.orderId,
+        orderItemId: feedback.orderItemId,
+        sellerId: feedback.sellerId,
+      });
+      notify(t('sellerFeedback.followUpSubmittedToast'), 'success');
+      setFollowUpText('');
+      setFollowUpOpen(false);
     } catch (err) {
       notify(messageFromError(err), 'error');
     }
@@ -153,6 +142,9 @@ export function SellerFeedbackDetail({
               <Badge tone={toneFor(feedback.commentType)}>
                 {t(`sellerFeedback.commentType.${feedback.commentType}`)}
               </Badge>
+              {feedback.verifiedPurchase && feedback.source === 'BUYER' && (
+                <Badge tone="primary">{t('sellerFeedback.verifiedPurchase')}</Badge>
+              )}
               {feedback.source === 'AUTOMATED' && (
                 <Badge tone="neutral">{t('sellerFeedback.automatedFeedback')}</Badge>
               )}
@@ -189,6 +181,14 @@ export function SellerFeedbackDetail({
         </div>
       )}
 
+      {feedback.followUpComment && (
+        <div className="rounded-md border border-border bg-surface-2 p-3 text-sm">
+          <p className="font-semibold text-text">{t('sellerFeedback.followUpComment')}</p>
+          <p className="mt-1 text-text">{feedback.followUpComment.commentText}</p>
+          <p className="mt-1 text-xs text-muted">{formatDate(feedback.followUpComment.createdAt)}</p>
+        </div>
+      )}
+
       {feedback.sellerResponse && (
         <div className="rounded-md bg-surface-2 p-3 text-sm">
           <p className="font-semibold text-text">{t('sellerFeedback.sellerResponse')}</p>
@@ -219,17 +219,12 @@ export function SellerFeedbackDetail({
         </div>
       )}
 
-      {(buyerEditable || sellerActions) && (
+      {(canFollowUp || sellerActions) && (
         <div className="flex flex-wrap gap-2">
-          {buyerEditable && (
-            <>
-              <Button size="sm" variant="secondary" onClick={() => setEditOpen(true)}>
-                {t('sellerFeedback.editFeedback')}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setDeleteOpen(true)}>
-                {t('sellerFeedback.deleteFeedback')}
-              </Button>
-            </>
+          {canFollowUp && (
+            <Button size="sm" variant="secondary" onClick={() => setFollowUpOpen(true)}>
+              {t('sellerFeedback.addFollowUp')}
+            </Button>
           )}
           {sellerActions && !feedback.sellerResponse && (
             <Button size="sm" variant="secondary" onClick={() => setRespondOpen(true)}>
@@ -252,17 +247,6 @@ export function SellerFeedbackDetail({
         </div>
       )}
 
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={t('sellerFeedback.editFeedback')} size="lg">
-        <SellerFeedbackForm
-          mode="edit"
-          initialValue={feedback}
-          allowImages={false}
-          submitting={mutations.update.isPending}
-          onSubmit={submitEdit}
-          onCancel={() => setEditOpen(false)}
-        />
-      </Modal>
-
       <Modal open={revisionOpen} onClose={() => setRevisionOpen(false)} title={t('sellerFeedback.acceptRevision')} size="lg">
         <SellerFeedbackForm
           mode="revision"
@@ -275,21 +259,30 @@ export function SellerFeedbackDetail({
       </Modal>
 
       <Modal
-        open={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
-        title={t('sellerFeedback.deleteFeedback')}
+        open={followUpOpen}
+        onClose={() => setFollowUpOpen(false)}
+        title={t('sellerFeedback.addFollowUp')}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setDeleteOpen(false)}>
+            <Button variant="ghost" onClick={() => setFollowUpOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button variant="danger" loading={mutations.remove.isPending} onClick={submitDelete}>
-              {t('common.delete')}
+            <Button
+              loading={mutations.addFollowUp.isPending}
+              disabled={!followUpText.trim()}
+              onClick={submitFollowUp}
+            >
+              {t('sellerFeedback.addFollowUp')}
             </Button>
           </>
         }
       >
-        <p>{t('sellerFeedback.deleteConfirm')}</p>
+        <Textarea
+          label={t('sellerFeedback.followUpComment')}
+          value={followUpText}
+          maxLength={500}
+          onChange={(e) => setFollowUpText(e.target.value)}
+        />
       </Modal>
 
       <Modal

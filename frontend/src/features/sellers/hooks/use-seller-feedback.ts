@@ -3,7 +3,6 @@ import {
   sellerFeedbackApi,
   type SellerFeedbackFields,
   type SellerFeedbackListParams,
-  type SellerFeedbackUpdate,
 } from '../services/seller-feedback-api';
 
 export const sellerFeedbackKeys = {
@@ -96,33 +95,6 @@ export function useSellerFeedbackMutations() {
     },
   });
 
-  const update = useMutation({
-    mutationFn: (input: {
-      feedbackId: string;
-      payload: SellerFeedbackUpdate;
-      orderId?: string;
-      orderItemId?: string;
-      sellerId?: string;
-    }) => sellerFeedbackApi.updateSellerFeedback(input.feedbackId, input.payload),
-    onSuccess: (feedback, input) => {
-      invalidateFeedbackCaches(qc, {
-        orderId: feedback.orderId ?? input.orderId,
-        orderItemId: feedback.orderItemId ?? input.orderItemId,
-        sellerId: feedback.sellerId ?? input.sellerId,
-      });
-    },
-  });
-
-  const remove = useMutation({
-    mutationFn: (input: {
-      feedbackId: string;
-      orderId?: string;
-      orderItemId?: string;
-      sellerId?: string;
-    }) => sellerFeedbackApi.deleteSellerFeedback(input.feedbackId),
-    onSuccess: (_, input) => invalidateFeedbackCaches(qc, input),
-  });
-
   const respond = useMutation({
     mutationFn: (input: { feedbackId: string; commentText: string; sellerId?: string }) =>
       sellerFeedbackApi.respondToSellerFeedback(input.feedbackId, {
@@ -130,6 +102,32 @@ export function useSellerFeedbackMutations() {
       }),
     onSuccess: (feedback, input) => {
       invalidateFeedbackCaches(qc, { sellerId: feedback.sellerId ?? input.sellerId });
+    },
+  });
+
+  const addFollowUp = useMutation({
+    mutationFn: (input: {
+      feedbackId: string;
+      commentText: string;
+      orderId?: string;
+      orderItemId?: string;
+      sellerId?: string;
+    }) =>
+      sellerFeedbackApi.addSellerFeedbackFollowUp(input.feedbackId, {
+        commentText: input.commentText,
+      }),
+    onSuccess: (feedback, input) => {
+      if ((feedback.orderId ?? input.orderId) && (feedback.orderItemId ?? input.orderItemId)) {
+        qc.invalidateQueries({
+          queryKey: sellerFeedbackKeys.orderItem(
+            feedback.orderId ?? input.orderId,
+            feedback.orderItemId ?? input.orderItemId,
+          ),
+        });
+      }
+      const sellerId = feedback.sellerId ?? input.sellerId;
+      if (sellerId) qc.invalidateQueries({ queryKey: ['seller-feedbacks', sellerId] });
+      else qc.invalidateQueries({ queryKey: ['seller-feedbacks'] });
     },
   });
 
@@ -164,5 +162,5 @@ export function useSellerFeedbackMutations() {
     },
   });
 
-  return { leave, update, remove, respond, requestRevision, respondRevision };
+  return { leave, respond, addFollowUp, requestRevision, respondRevision };
 }

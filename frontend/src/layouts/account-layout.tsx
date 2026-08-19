@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { paths } from '@/routes/paths';
 import { Icon, type IconVariant } from '@/components/icon';
 import { Select } from '@/components/select';
+import { useAuth } from '@/features/auth/hooks/use-auth';
 import { cn } from '@/utils/cn';
 
 /** Account section shell: dropdown nav on mobile, sticky sidebar on desktop. */
 export function AccountLayout() {
   const { t } = useTranslation();
+  const { user } = useAuth();
 
   const NAV: { to: string; label: string; icon: IconVariant; end?: boolean }[] = [
     { to: paths.account.profile, label: t('account.navProfile'), icon: 'icon-user' },
@@ -15,6 +17,9 @@ export function AccountLayout() {
     { to: paths.messages, label: t('account.navMessages'), icon: 'icon-mail' },
     { to: paths.account.bids, label: t('account.navBids'), icon: 'icon-tag' },
     { to: paths.account.offers, label: t('account.navOffers'), icon: 'icon-gift' },
+    ...(user?.sellerProfile
+      ? [{ to: paths.account.sellerFeedbacks, label: t('account.navSellerFeedbacks'), icon: 'icon-star' as const }]
+      : []),
     { to: paths.account.password, label: t('account.navPassword'), icon: 'icon-shield' },
     { to: paths.account.addresses, label: t('account.navAddresses'), icon: 'icon-map-pin' },
     { to: paths.account.notifications, label: t('account.navNotifications'), icon: 'icon-bell' },

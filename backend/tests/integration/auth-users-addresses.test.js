@@ -563,6 +563,26 @@ describe('users', () => {
     await login(agent);
     const response = await agent.get(`${prefix}/users/me`).expect(200);
     expect(response.body.data.email).toBe('user@example.com');
+    expect(response.body.data.sellerProfile).toBeNull();
+  });
+
+  it('23b auth read includes seller profile identity for seller users', async () => {
+    const agent = request.agent(app);
+    await login(agent);
+    const read = await agent.get(`${prefix}/users/me`).expect(200);
+    const { SellerProfile } =
+      await import('../../src/modules/sellers/seller-profile.model.js');
+    const seller = await SellerProfile.create({
+      userId: read.body.data.id,
+      displayName: 'Seller User',
+      status: 'ACTIVE',
+    });
+
+    const response = await agent.get(`${prefix}/users/me`).expect(200);
+    expect(response.body.data.sellerProfile).toEqual({
+      id: String(seller._id),
+    });
+    expect(response.body.data.role).toBe('USER');
   });
 
   it('24 allowed updates', async () => {

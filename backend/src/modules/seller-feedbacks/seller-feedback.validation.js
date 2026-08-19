@@ -106,6 +106,14 @@ export const respondToSellerFeedbackSchema = z
   })
   .strict();
 
+export const addSellerFeedbackFollowUpSchema = z
+  .object({
+    body: z.object({ commentText: z.string().trim().min(1).max(500) }).strict(),
+    params: z.object({ feedbackId: objectId }).strict(),
+    query: z.object({}).strict(),
+  })
+  .strict();
+
 export const createFeedbackRevisionRequestSchema = z
   .object({
     body: emptyBody,

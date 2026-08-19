@@ -259,6 +259,16 @@ export const schemas = {
       commentText: { type: 'string', minLength: 1, maxLength: 500 },
     },
   },
+  SellerFeedbackFollowUpRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['commentText'],
+    properties: {
+      commentText: { type: 'string', minLength: 1, maxLength: 500 },
+    },
+    description:
+      'One immutable buyer follow-up comment. Does not change commentType, original commentText, DSR, images, submittedAt, or revision state.',
+  },
   CreateFeedbackRevisionRequest: {
     type: 'object',
     additionalProperties: false,
@@ -305,9 +315,12 @@ export const schemas = {
   },
   UpdateSellerFeedbackRequest: {
     type: 'object',
+    deprecated: true,
     minProperties: 1,
     additionalProperties: false,
     properties: feedbackFields,
+    description:
+      'Deprecated. Submitted BUYER feedback cannot be edited directly; revision ACCEPT is the only supported path for changing canonical feedback fields.',
   },
   UserProfile: {
     type: 'object',
@@ -317,9 +330,16 @@ export const schemas = {
       fullName: { type: 'string' },
       phone: { type: 'string', nullable: true },
       avatarUrl: { type: 'string', format: 'uri', nullable: true },
-      role: { type: 'string', enum: ['BUYER', 'SELLER', 'ADMIN'] },
+      role: { type: 'string', enum: ['USER', 'ADMIN'] },
       status: { type: 'string' },
       isEmailVerified: { type: 'boolean' },
+      sellerProfile: {
+        type: 'object',
+        nullable: true,
+        properties: { id: objectId },
+        description:
+          'Present when this USER owns a SellerProfile. Normal buyers receive null.',
+      },
       createdAt: timestamp,
       updatedAt: timestamp,
     },
@@ -516,6 +536,12 @@ export const schemas = {
         description:
           'Server-controlled. AUTOMATED is created only by the backend 2-minute demo sweep.',
       },
+      verifiedPurchase: {
+        type: 'boolean',
+        readOnly: true,
+        description:
+          'Read-only server-derived flag for transaction-backed SellerFeedback.',
+      },
       submittedAt: {
         ...timestamp,
         description:
@@ -532,6 +558,16 @@ export const schemas = {
         type: 'array',
         maxItems: 5,
         items: feedbackImage,
+      },
+      followUpComment: {
+        type: 'object',
+        nullable: true,
+        description:
+          'One immutable buyer follow-up comment. It is separate from revision and never changes canonical feedback fields.',
+        properties: {
+          commentText: { type: 'string', maxLength: 500 },
+          createdAt: timestamp,
+        },
       },
       sellerResponse: {
         type: 'object',

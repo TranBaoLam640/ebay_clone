@@ -320,48 +320,41 @@ export const awaiting = async (buyerId) => {
   });
 };
 
-export const update = async (buyerId, feedbackId, input) => {
+export const update = async (buyerId, feedbackId) => {
   const existing = await repository.findById(feedbackId);
   if (!existing || String(existing.buyerId) !== String(buyerId))
     throw missing();
-  if (sourceOf(existing) === 'AUTOMATED')
-    throw revisionConflict('Automated feedback cannot be edited directly');
-  if (existing.revisionRequest?.status === 'PENDING') {
-    if (new Date() > new Date(existing.revisionRequest.expiresAt)) {
-      await repository.expireRevisionRequest(feedbackId, new Date());
-    } else {
-      throw revisionConflict('Feedback revision request is pending');
-    }
-  }
-  return repository.transaction(async (session) => {
-    const feedback = await repository.updateOwned(
-      buyerId,
-      feedbackId,
-      normalizeInput(input),
-      session,
-    );
-    if (!feedback) throw missing();
-    await persistAggregate(feedback.sellerId, session);
-    return repository.toPublic(feedback, session);
-  });
+  throw revisionConflict('Submitted seller feedback cannot be edited directly');
 };
 
 export const remove = async (buyerId, feedbackId) => {
-  let images = [];
   const existing = await repository.findById(feedbackId);
   if (!existing || String(existing.buyerId) !== String(buyerId))
     throw missing();
-  if (sourceOf(existing) === 'AUTOMATED')
-    throw revisionConflict('Automated feedback cannot be deleted directly');
-  const result = await repository.transaction(async (session) => {
-    const feedback = await repository.deleteOwned(buyerId, feedbackId, session);
-    if (!feedback) throw missing();
-    images = feedback.images || [];
-    await persistAggregate(feedback.sellerId, session);
-    return { deleted: true };
-  });
-  await cleanupFeedbackImages(images);
-  return result;
+  throw revisionConflict(
+    'Submitted seller feedback cannot be deleted directly',
+  );
+};
+
+export const addFollowUp = async (buyerId, feedbackId, input) => {
+  const existing = await repository.findById(feedbackId);
+  if (!existing || String(existing.buyerId) !== String(buyerId))
+    throw missing();
+  if (sourceOf(existing) !== 'BUYER')
+    throw revisionConflict(
+      'Automated feedback cannot receive a buyer follow-up',
+    );
+  if (existing.followUpComment)
+    throw revisionConflict('Follow-up comment already submitted');
+
+  const updated = await repository.addFollowUp(
+    feedbackId,
+    buyerId,
+    input.commentText,
+    new Date(),
+  );
+  if (!updated) throw revisionConflict('Follow-up comment already submitted');
+  return repository.toPublic(updated);
 };
 
 export const listPublic = async (sellerId, query) => {

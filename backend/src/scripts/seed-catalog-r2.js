@@ -237,12 +237,6 @@ const attributesBySlug = {
   ],
 };
 
-const slugify = (value) =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-
 const toAttribute = ([name, value, dataType, unit]) => ({
   name,
   normalizedName: name.trim().toLowerCase().replace(/\s+/g, ' '),
@@ -603,10 +597,10 @@ const seedCatalog = async () => {
     coupons: await Coupon.countDocuments(),
   };
 
-  console.log('Catalog R2 seed complete');
-  console.table(counts);
-  console.log('Login accounts:');
-  console.table([
+  process.stdout.write('Catalog R2 seed complete\n');
+  process.stdout.write(`${JSON.stringify(counts, null, 2)}\n`);
+  process.stdout.write('Login accounts:\n');
+  [
     { email: 'buyer1@example.test', password },
     { email: 'buyer2@example.test', password },
     { email: 'seller1@example.test', password },
@@ -614,7 +608,9 @@ const seedCatalog = async () => {
     { email: 'seller3@example.test', password },
     { email: 'seller4@example.test', password },
     { email: 'admin@example.test', password },
-  ]);
+  ].forEach(({ email, password }) => {
+    process.stdout.write(`- ${email} / ${password}\n`);
+  });
 };
 
 try {

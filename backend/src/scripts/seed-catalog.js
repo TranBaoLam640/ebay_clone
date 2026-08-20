@@ -1015,27 +1015,31 @@ const printSummary = async ({ availableKeys, dryRun }) => {
       }
     : await seedCounts();
 
-  console.log('Catalog seed');
-  console.log('------------');
-  console.log('');
-  console.log(`Users:           ${counts.users}`);
-  console.log(`Seller profiles: ${counts.sellerProfiles}`);
-  console.log(`Categories:      ${counts.categories}`);
-  console.log(`CatalogProducts: ${counts.catalogProducts}`);
-  console.log(`Products:        ${counts.products}`);
-  console.log(`Coupons:         ${counts.coupons}`);
-  console.log('');
-  console.log('R2 images:');
-  console.log(`Objects found:   ${availableKeys.length}`);
-  console.log(`Matched:         ${productSeeds.length}`);
-  console.log('Unmatched:       0');
-  console.log('');
-  console.log(dryRun ? 'Dry run complete. No database writes.' : 'Done.');
-  console.log('');
-  console.log('Development login accounts:');
-  for (const email of seedEmails) console.log(`- ${email}`);
-  console.log('');
-  console.log(`Development password: ${developmentPassword}`);
+  process.stdout.write(
+    [
+      'Catalog seed',
+      '------------',
+      '',
+      `Users:           ${counts.users}`,
+      `Seller profiles: ${counts.sellerProfiles}`,
+      `Categories:      ${counts.categories}`,
+      `CatalogProducts: ${counts.catalogProducts}`,
+      `Products:        ${counts.products}`,
+      `Coupons:         ${counts.coupons}`,
+      '',
+      'R2 images:',
+      `Objects found:   ${availableKeys.length}`,
+      `Matched:         ${productSeeds.length}`,
+      'Unmatched:       0',
+      '',
+      dryRun ? 'Dry run complete. No database writes.' : 'Done.',
+      '',
+      'Development login accounts:',
+      ...seedEmails.map((email) => `- ${email}`),
+      '',
+      `Development password: ${developmentPassword}`,
+    ].join('\n') + '\n',
+  );
 };
 
 const seedCatalog = async () => {

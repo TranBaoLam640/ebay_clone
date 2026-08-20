@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'backend/**'
-      - '.github/workflows/ci.yml'
+      - "backend/**"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 permissions:
@@ -45,7 +45,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/konfusee/sbay-backend
+          images: ghcr.io/tranbaolam640/sbay-backend
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}

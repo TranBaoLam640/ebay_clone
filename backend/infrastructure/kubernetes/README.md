@@ -46,10 +46,10 @@ kubectl apply -f namespace.yaml
 # GHCR pull secret (paste PAT without echoing it to history):
 read -rs GHCR_PAT
 kubectl -n sbay create secret docker-registry ghcr \
-  --docker-server=ghcr.io --docker-username=konfusee --docker-password="$GHCR_PAT"
+  --docker-server=ghcr.io --docker-username=tranbaolam640 --docker-password="$GHCR_PAT"
 # Give Keel the same creds so it can poll the private image:
 kubectl -n keel create secret docker-registry ghcr \
-  --docker-server=ghcr.io --docker-username=konfusee --docker-password="$GHCR_PAT"
+  --docker-server=ghcr.io --docker-username=tranbaolam640 --docker-password="$GHCR_PAT"
 unset GHCR_PAT
 
 # Mongo root creds + replica-set keyfile:

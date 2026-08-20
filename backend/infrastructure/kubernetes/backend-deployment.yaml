@@ -10,13 +10,13 @@ metadata:
     # (pull-based; no SSH). Detecting by tag NAME is reliable, unlike :latest digest-diffing.
     keel.sh/policy: glob:build-*
     keel.sh/trigger: poll
-    keel.sh/pollSchedule: "@every 1m"
+    keel.sh/pollSchedule: '@every 1m'
 spec:
   replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0     # zero-downtime: surge a new pod before removing an old one
+      maxUnavailable: 0 # zero-downtime: surge a new pod before removing an old one
       maxSurge: 1
   selector:
     matchLabels:
@@ -51,7 +51,7 @@ spec:
               done
       containers:
         - name: backend
-          image: ghcr.io/konfusee/sbay-backend:latest
+          image: ghcr.io/tranbaolam640/sbay-backend:latest
           ports:
             - containerPort: 4000
           envFrom:
@@ -75,11 +75,11 @@ spec:
             preStop:
               # Let endpoint removal propagate before the app stops accepting (avoids 5xx on rollout).
               exec:
-                command: ["sh", "-c", "sleep 8"]
+                command: ['sh', '-c', 'sleep 8']
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: '100m'
+              memory: '128Mi'
             limits:
-              cpu: "500m"
-              memory: "256Mi"
+              cpu: '500m'
+              memory: '256Mi'

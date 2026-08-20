@@ -45,4 +45,5 @@ export const parameters = {
     'Buyer-owned checkout group identifier.',
   ),
   ReturnId: identifier('returnId', 'Buyer-owned return request identifier.'),
+  ShipmentId: identifier('shipmentId', 'Shipment identifier.'),
 };

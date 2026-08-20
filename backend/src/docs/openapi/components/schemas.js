@@ -1238,6 +1238,43 @@ export const schemas = {
       updatedAt: timestamp,
     },
   },
+  Shipment: {
+    type: 'object',
+    required: [
+      '_id',
+      'orderId',
+      'buyerId',
+      'sellerId',
+      'carrier',
+      'trackingNumber',
+      'status',
+      'estimatedDeliveryAt',
+      'createdAt',
+      'updatedAt',
+    ],
+    properties: {
+      _id: objectId,
+      orderId: objectId,
+      buyerId: objectId,
+      sellerId: objectId,
+      shipperId: { ...objectId, nullable: true },
+      carrier: { type: 'string', enum: ['SBay Express'] },
+      trackingNumber: {
+        type: 'string',
+        pattern: '^SBAY-[A-F0-9]{8}$',
+        example: 'SBAY-A1B2C3D4',
+      },
+      status: {
+        type: 'string',
+        enum: ['READY_FOR_PICKUP', 'IN_TRANSIT', 'DELIVERED'],
+      },
+      estimatedDeliveryAt: timestamp,
+      pickedUpAt: nullableTimestamp,
+      deliveredAt: nullableTimestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  },
   CheckoutGroup: {
     type: 'object',
     required: [

@@ -58,6 +58,8 @@ const seed = async () => {
     otherBuyer: objectId(),
     sellerUser: objectId(),
     sellerUser2: objectId(),
+    shipper: objectId(),
+    shipper2: objectId(),
     seller: objectId(),
     seller2: objectId(),
     category: objectId(),
@@ -107,6 +109,24 @@ const seed = async () => {
       email: 'seller2@example.test',
       passwordHash,
       fullName: 'Seller 2',
+      status: 'ACTIVE',
+      isEmailVerified: true,
+    },
+    {
+      _id: ids.shipper,
+      email: 'shipper@example.test',
+      passwordHash,
+      fullName: 'Shipper',
+      role: 'SHIPPER',
+      status: 'ACTIVE',
+      isEmailVerified: true,
+    },
+    {
+      _id: ids.shipper2,
+      email: 'shipper2@example.test',
+      passwordHash,
+      fullName: 'Shipper 2',
+      role: 'SHIPPER',
       status: 'ACTIVE',
       isEmailVerified: true,
     },
@@ -238,12 +258,32 @@ const paymentAction = (agent, action, checkoutGroupId) =>
   mutate(agent, 'post', `/payments/${action}`, {
     checkoutGroupId: String(checkoutGroupId),
   });
+const shipmentAction = (agent, action, shipmentId) =>
+  mutate(agent, 'patch', `/shipments/${shipmentId}/${action}`);
 const checkoutBody = (items, overrides = {}) => ({
   selectedCartItemIds: items.map((item) => item.id),
   addressId: String(ids.address),
   paymentMethod: 'COD',
   ...overrides,
 });
+const createConfirmedShipment = async (key = `ship-${objectId()}`) => {
+  const agent = await login();
+  const item = (await add(agent, ids.productUuid).expect(200)).body.data
+    .items[0];
+  const checkout = await mutate(
+    agent,
+    'post',
+    '/checkout',
+    checkoutBody([item]),
+    key,
+  ).expect(201);
+  await paymentAction(agent, 'cod/confirm', checkout.body.data._id).expect(200);
+  const order = await models.Order.findOne({
+    checkoutGroupId: checkout.body.data._id,
+  }).lean();
+  const shipment = await models.Shipment.findOne({ orderId: order._id }).lean();
+  return { agent, checkout, order, shipment };
+};
 
 beforeAll(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
@@ -267,6 +307,7 @@ beforeAll(async () => {
     import('../../src/modules/idempotency/idempotency-record.model.js'),
     import('../../src/modules/payments/payment.model.js'),
     import('../../src/modules/returns/return-request.model.js'),
+    import('../../src/modules/shipments/shipment.model.js'),
     import('../../src/common/utils/hash.js'),
     import('../../src/common/utils/token.js'),
   ]);
@@ -287,9 +328,10 @@ beforeAll(async () => {
     IdempotencyRecord: modules[13].IdempotencyRecord,
     Payment: modules[14].Payment,
     ReturnRequest: modules[15].ReturnRequest,
+    Shipment: modules[16].Shipment,
   };
-  passwordHash = await modules[16].hashPassword(password);
-  signAccess = modules[17].signAccess;
+  passwordHash = await modules[17].hashPassword(password);
+  signAccess = modules[18].signAccess;
   await Promise.all(Object.values(models).map((model) => model.init()));
   ({ app } = await import('../../src/app.js'));
 });
@@ -397,6 +439,11 @@ describe('User 4 checkout, payment, orders, and returns', () => {
         }),
       );
     expect(response.body.data.payment.status).toBe('PENDING');
+    expect(
+      await models.Shipment.countDocuments({
+        orderId: { $in: response.body.data.orderIds },
+      }),
+    ).toBe(0);
     const emailSpy = vi
       .spyOn(emailService, 'sendPurchaseFeedbackEmail')
       .mockResolvedValue(true);
@@ -418,6 +465,35 @@ describe('User 4 checkout, payment, orders, and returns', () => {
         ]),
       }),
     );
+    const paidOrders = await models.Order.find({
+      checkoutGroupId: response.body.data._id,
+    })
+      .sort({ sellerId: 1 })
+      .lean();
+    expect(paidOrders).toHaveLength(2);
+    expect(paidOrders.map((order) => order.orderStatus)).toEqual([
+      'CONFIRMED',
+      'CONFIRMED',
+    ]);
+    expect(paidOrders.every((order) => !order.deliveredAt)).toBe(true);
+    const shipments = await models.Shipment.find({
+      orderId: { $in: paidOrders.map((order) => order._id) },
+    }).lean();
+    expect(shipments).toHaveLength(2);
+    expect(
+      new Set(shipments.map((shipment) => String(shipment.orderId))).size,
+    ).toBe(2);
+    for (const shipment of shipments) {
+      expect(shipment).toEqual(
+        expect.objectContaining({
+          carrier: 'SBay Express',
+          status: 'READY_FOR_PICKUP',
+          shipperId: null,
+        }),
+      );
+      expect(shipment.trackingNumber).toMatch(/^SBAY-[A-F0-9]{8}$/);
+      expect(shipment.estimatedDeliveryAt).toBeInstanceOf(Date);
+    }
     expect(
       await models.Notification.find({
         eventType: USER4_NOTIFICATION_EVENTS.COD_CONFIRMED,
@@ -665,8 +741,22 @@ describe('User 4 checkout, payment, orders, and returns', () => {
       'CONFIRMED',
     );
     const order = await models.Order.findOne({ checkoutGroupId: id }).lean();
-    expect(order.orderStatus).toBe('DELIVERED');
-    expect(order.deliveredAt).toBeInstanceOf(Date);
+    expect(order.orderStatus).toBe('CONFIRMED');
+    expect(order.deliveredAt).toBeFalsy();
+    const shipment = await models.Shipment.findOne({
+      orderId: order._id,
+    }).lean();
+    expect(shipment).toEqual(
+      expect.objectContaining({
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        shipperId: null,
+        carrier: 'SBay Express',
+        status: 'READY_FOR_PICKUP',
+      }),
+    );
+    expect(shipment.trackingNumber).toMatch(/^SBAY-[A-F0-9]{8}$/);
+    expect(shipment.estimatedDeliveryAt).toBeInstanceOf(Date);
     expect(
       await models.Notification.find({
         eventType: USER4_NOTIFICATION_EVENTS.PAYPAL_CAPTURED,
@@ -702,6 +792,109 @@ describe('User 4 checkout, payment, orders, and returns', () => {
       expect.objectContaining({ method: 'PAYPAL', status: 'PENDING' }),
     );
     expect(created.body.data.payment).not.toHaveProperty('providerOrderId');
+  });
+
+  it('lets SHIPPER list available and own shipments only', async () => {
+    const { shipment } = await createConfirmedShipment('shipper-list');
+    const user = await login();
+    await user.get(`${prefix}/shipments?scope=available`).expect(403);
+
+    const shipper = await login('shipper@example.test');
+    const available = await shipper
+      .get(`${prefix}/shipments?scope=available&page=1&limit=10`)
+      .expect(200);
+    expect(available.body.data.map((item) => item._id)).toContain(
+      String(shipment._id),
+    );
+
+    await shipmentAction(shipper, 'pickup', shipment._id).expect(200);
+    const mine = await shipper
+      .get(`${prefix}/shipments?scope=mine`)
+      .expect(200);
+    expect(mine.body.data).toEqual([
+      expect.objectContaining({
+        _id: String(shipment._id),
+        status: 'IN_TRANSIT',
+        shipperId: String(ids.shipper),
+      }),
+    ]);
+    const availableAfterPickup = await shipper
+      .get(`${prefix}/shipments?scope=available`)
+      .expect(200);
+    expect(availableAfterPickup.body.data).toEqual([]);
+  });
+
+  it('atomically claims pickup and rejects invalid pickup states', async () => {
+    const { shipment } = await createConfirmedShipment('pickup-race');
+    const shipperA = await login('shipper@example.test');
+    const shipperB = await login('shipper2@example.test');
+
+    const responses = await Promise.all([
+      shipmentAction(shipperA, 'pickup', shipment._id),
+      shipmentAction(shipperB, 'pickup', shipment._id),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+    const pickedUp = await models.Shipment.findById(shipment._id).lean();
+    expect(pickedUp.status).toBe('IN_TRANSIT');
+    expect([String(ids.shipper), String(ids.shipper2)]).toContain(
+      String(pickedUp.shipperId),
+    );
+    expect(pickedUp.pickedUpAt).toBeInstanceOf(Date);
+
+    const owner =
+      String(pickedUp.shipperId) === String(ids.shipper) ? shipperA : shipperB;
+    await shipmentAction(owner, 'pickup', shipment._id).expect(409);
+    await shipmentAction(owner, 'deliver', shipment._id).expect(200);
+    await shipmentAction(owner, 'pickup', shipment._id).expect(409);
+  });
+
+  it('delivers only by owning shipper and syncs Order deliveredAt transactionally', async () => {
+    const { shipment, order } = await createConfirmedShipment('deliver-sync');
+    const shipperA = await login('shipper@example.test');
+    const shipperB = await login('shipper2@example.test');
+
+    await shipmentAction(shipperB, 'deliver', shipment._id).expect(409);
+    await shipmentAction(shipperA, 'pickup', shipment._id).expect(200);
+    await shipmentAction(shipperB, 'deliver', shipment._id).expect(409);
+
+    const delivered = await shipmentAction(
+      shipperA,
+      'deliver',
+      shipment._id,
+    ).expect(200);
+    expect(delivered.body.data.status).toBe('DELIVERED');
+    expect(delivered.body.data.deliveredAt).toBeTruthy();
+    await shipmentAction(shipperA, 'deliver', shipment._id).expect(409);
+
+    const deliveredShipment = await models.Shipment.findById(
+      shipment._id,
+    ).lean();
+    const deliveredOrder = await models.Order.findById(order._id).lean();
+    expect(deliveredShipment.status).toBe('DELIVERED');
+    expect(deliveredOrder.orderStatus).toBe('DELIVERED');
+    expect(deliveredShipment.deliveredAt).toBeInstanceOf(Date);
+    expect(deliveredOrder.deliveredAt).toBeInstanceOf(Date);
+    expect(deliveredOrder.deliveredAt.toISOString()).toBe(
+      deliveredShipment.deliveredAt.toISOString(),
+    );
+  });
+
+  it('rolls back shipment delivery when the Order is not confirmed', async () => {
+    const { shipment, order } =
+      await createConfirmedShipment('deliver-rollback');
+    const shipper = await login('shipper@example.test');
+    await shipmentAction(shipper, 'pickup', shipment._id).expect(200);
+    await models.Order.updateOne(
+      { _id: order._id },
+      { orderStatus: 'PAYMENT_FAILED' },
+    );
+
+    await shipmentAction(shipper, 'deliver', shipment._id).expect(409);
+    const unchanged = await models.Shipment.findById(shipment._id).lean();
+    expect(unchanged.status).toBe('IN_TRANSIT');
+    expect(unchanged.deliveredAt).toBeNull();
   });
 
   it('rolls back PayPal create persistence and releases claim when notification fails', async () => {
@@ -1049,6 +1242,28 @@ describe('User 4 checkout, payment, orders, and returns', () => {
       reason: 'OTHER',
       details: 'No longer delivered',
     }).expect(409);
+  });
+
+  it('keeps returns ineligible until shipment delivery syncs Order DELIVERED', async () => {
+    const { shipment, order } = await createConfirmedShipment(
+      'return-after-shipping',
+    );
+    const agent = await login();
+    const shipper = await login('shipper@example.test');
+    const body = {
+      orderId: String(order._id),
+      orderItemId: String(order.items[0]._id),
+      quantity: 1,
+      reason: 'DAMAGED',
+      details: 'Only eligible after delivery',
+    };
+
+    await mutate(agent, 'post', '/returns', body).expect(409);
+    await shipmentAction(shipper, 'pickup', shipment._id).expect(200);
+    await mutate(agent, 'post', '/returns', body).expect(409);
+    await shipmentAction(shipper, 'deliver', shipment._id).expect(200);
+    const created = await mutate(agent, 'post', '/returns', body).expect(201);
+    expect(created.body.data.orderId).toBe(String(order._id));
   });
 
   it('persists exact replay responses and rejects a live PROCESSING claim', async () => {
@@ -1838,12 +2053,23 @@ describe('Auction win order checkout', () => {
     expect(String(wrapped.checkoutGroupId)).toBe(String(groupId));
     expect(wrapped.shippingAddress.fullName).toBe('Buyer');
 
-    // COD confirm finalizes the win order → DELIVERED.
+    // COD confirm now confirms the win order and creates its shipment.
     await mutate(agent, 'post', '/payments/cod/confirm', {
       checkoutGroupId: groupId,
     }).expect(200);
     const paid = await models.Order.findById(order._id).lean();
-    expect(paid.orderStatus).toBe('DELIVERED');
+    expect(paid.orderStatus).toBe('CONFIRMED');
+    expect(paid.deliveredAt).toBeFalsy();
+    const shipment = await models.Shipment.findOne({
+      orderId: order._id,
+    }).lean();
+    expect(shipment).toEqual(
+      expect.objectContaining({
+        status: 'READY_FOR_PICKUP',
+        carrier: 'SBay Express',
+        shipperId: null,
+      }),
+    );
   });
 
   it('is idempotent — a repeated checkout replays the same group', async () => {

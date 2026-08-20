@@ -19,6 +19,7 @@ import { checkoutGroupPaths } from './paths/checkout-groups.paths.js';
 import { orderPaths } from './paths/orders.paths.js';
 import { paymentPaths } from './paths/payments.paths.js';
 import { returnPaths } from './paths/returns.paths.js';
+import { shipmentPaths } from './paths/shipments.paths.js';
 import { conversationPaths } from './paths/conversations.paths.js';
 import { offerPaths } from './paths/offers.paths.js';
 
@@ -41,6 +42,7 @@ const pathGroups = [
   orderPaths,
   paymentPaths,
   returnPaths,
+  shipmentPaths,
   conversationPaths,
   offerPaths,
 ];

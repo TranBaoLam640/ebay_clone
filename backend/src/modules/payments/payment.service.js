@@ -11,6 +11,7 @@ import * as productRepository from '../products/product.repository.js';
 import * as userRepository from '../users/repository.js';
 import { reverse as reverseCoupon } from '../coupons/coupon.service.js';
 import * as notificationService from '../notifications/service.js';
+import * as shipmentService from '../shipments/shipment.service.js';
 import {
   captureOrder as capturePayPalOrder,
   createOrder as createPayPalOrder,
@@ -97,6 +98,18 @@ const sendPurchaseFeedbackEmail = async (buyerId, groupId) => {
   }
 };
 
+const confirmOrdersAndCreateShipments = async (
+  buyerId,
+  groupId,
+  session,
+  now = new Date(),
+) => {
+  await orderRepository.markGroupConfirmed(buyerId, groupId, session);
+  const orders = await orderRepository.byGroup(buyerId, groupId, session);
+  for (const order of orders)
+    await shipmentService.createForOrder(order, { session, now });
+};
+
 export const createPayPal = async (buyerId, groupId) => {
   const current = await internalPayment(buyerId, groupId);
   if (current.method !== 'PAYPAL')
@@ -180,12 +193,7 @@ const confirmCapture = async (
       throw invalidState('Payment cannot be captured');
     }
     await checkoutGroupService.confirmPayment(buyerId, groupId, session);
-    await orderRepository.markGroupDelivered(
-      buyerId,
-      groupId,
-      new Date(),
-      session,
-    );
+    await confirmOrdersAndCreateShipments(buyerId, groupId, session);
     await paymentNotification(
       buyerId,
       groupId,
@@ -318,12 +326,7 @@ export const confirmCod = async (buyerId, groupId) => {
     const confirmed = await repository.confirmCod(buyerId, groupId, session);
     if (!confirmed) throw invalidState('COD payment cannot be confirmed');
     await checkoutGroupService.confirmPayment(buyerId, groupId, session);
-    await orderRepository.markGroupDelivered(
-      buyerId,
-      groupId,
-      new Date(),
-      session,
-    );
+    await confirmOrdersAndCreateShipments(buyerId, groupId, session);
     await paymentNotification(
       buyerId,
       groupId,

@@ -145,12 +145,12 @@ describe('shipping backend foundation', () => {
     );
   });
 
-  it('enforces one shipment per order and unique tracking numbers', async () => {
+  it('replays one shipment per order and enforces unique tracking numbers', async () => {
     const order = orderSnapshot();
-    await shipmentService.createForOrder(order);
-    await expect(shipmentService.createForOrder(order)).rejects.toMatchObject({
-      code: 11000,
-    });
+    const first = await shipmentService.createForOrder(order);
+    const replay = await shipmentService.createForOrder(order);
+    expect(String(replay._id)).toBe(String(first._id));
+    expect(await Shipment.countDocuments({ orderId: order._id })).toBe(1);
 
     await Shipment.create({
       orderId: id(),

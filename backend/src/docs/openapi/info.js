@@ -22,7 +22,7 @@ export const info = {
 
 ## Covered endpoint groups
 
-The document includes health/readiness, authentication, current user profile, addresses, notifications, categories, buyer product catalog, public seller detail, product reviews, seller feedback, Cart, Coupon validation, Checkout Preview and final Checkout, CheckoutGroup detail, Order reads, PayPal/COD payment actions, Buyer Returns, buyer/seller Messaging, Offers, attachments, and accepted-offer checkout payloads.
+The document includes health/readiness, authentication, current user profile, addresses, notifications, categories, buyer product catalog, public seller detail, product reviews, seller feedback, Cart, Coupon validation, Checkout Preview and final Checkout, CheckoutGroup detail, Order reads, PayPal/COD payment actions, Buyer Returns, shipper Shipment lifecycle actions, buyer/seller Messaging, Offers, attachments, and accepted-offer checkout payloads.
 
 ## Realtime messaging events
 
@@ -47,6 +47,7 @@ export const tags = [
   'Orders',
   'Payments',
   'Returns',
+  'Shipments',
   'Messaging',
   'Offers',
 ].map((name) => ({ name }));

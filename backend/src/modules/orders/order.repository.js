@@ -169,17 +169,19 @@ export const setGroupStatus = (
 ) =>
   Order.updateMany({ buyerId, checkoutGroupId }, { orderStatus }, { session });
 
-export const markGroupDelivered = (
-  buyerId,
-  checkoutGroupId,
-  deliveredAt,
-  session,
-) =>
+export const markGroupConfirmed = (buyerId, checkoutGroupId, session) =>
   Order.updateMany(
-    { buyerId, checkoutGroupId },
-    { orderStatus: 'DELIVERED', deliveredAt },
+    { buyerId, checkoutGroupId, orderStatus: 'PENDING_PAYMENT' },
+    { $set: { orderStatus: 'CONFIRMED' }, $unset: { deliveredAt: '' } },
     { session },
   );
+
+export const markDeliveredFromShipment = (orderId, deliveredAt, session) =>
+  Order.findOneAndUpdate(
+    { _id: orderId, orderStatus: 'CONFIRMED' },
+    { orderStatus: 'DELIVERED', deliveredAt },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
 
 // Undo a wrap: detach the order(s) from a (failed) group and reset them to
 // PENDING_PAYMENT so an auction-win order stays re-payable after a capture

@@ -42,7 +42,7 @@ npm run db:check
 npm run seed
 ```
 
-Copy `.env.example` to `.env`. Supported variables are `NODE_ENV`, `PORT`, `API_PREFIX`; `MONGODB_URI` or component-mode `MONGODB_HOST`, `MONGODB_PORT`, `MONGODB_DATABASE`, `MONGODB_USERNAME`, `MONGODB_PASSWORD`, `MONGODB_AUTH_SOURCE`, `MONGODB_REPLICA_SET`, `MONGODB_TLS`, `MONGODB_MAX_POOL_SIZE`, `MONGODB_MIN_POOL_SIZE`, `MONGODB_SERVER_SELECTION_TIMEOUT_MS`; `CLIENT_ORIGIN`, `TRUST_PROXY`; `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`; `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `COOKIE_DOMAIN`; `CSRF_SECRET`; `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SECURE`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`, `EMAIL_VERIFICATION_URL`; `LOG_LEVEL`, `RETURN_WINDOW_DAYS`, `PAYPAL_SIMULATION_ENABLED`; Cloudflare R2 storage variables `R2_ENDPOINT`, `R2_REGION`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL`; and `UPLOAD_MAX_BYTES`. JWT/CSRF secrets require 32+ characters.
+Copy `.env.example` to `.env`. Supported variables are `NODE_ENV`, `PORT`, `API_PREFIX`; `MONGODB_URI` or component-mode `MONGODB_HOST`, `MONGODB_PORT`, `MONGODB_DATABASE`, `MONGODB_USERNAME`, `MONGODB_PASSWORD`, `MONGODB_AUTH_SOURCE`, `MONGODB_REPLICA_SET`, `MONGODB_TLS`, `MONGODB_MAX_POOL_SIZE`, `MONGODB_MIN_POOL_SIZE`, `MONGODB_SERVER_SELECTION_TIMEOUT_MS`; `CLIENT_ORIGIN`, `TRUST_PROXY`; `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`; `COOKIE_SECURE`, `COOKIE_SAME_SITE`, `COOKIE_DOMAIN`; `CSRF_SECRET`; `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SECURE`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`, `EMAIL_VERIFICATION_URL`; `LOG_LEVEL`, `RETURN_WINDOW_DAYS`, `SHIPMENT_ETA_DAYS`, `PAYPAL_SIMULATION_ENABLED`; Cloudflare R2 storage variables `R2_ENDPOINT`, `R2_REGION`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL`; and `UPLOAD_MAX_BYTES`. JWT/CSRF secrets require 32+ characters.
 
 ### Remote MongoDB configuration
 
@@ -159,7 +159,7 @@ HttpOnly authentication cookies are intentionally invisible to Swagger UI and br
 
 See [`docs/api/swagger-ui.md`](docs/api/swagger-ui.md) for concise testing guidance.
 
-`RETURN_WINDOW_DAYS` is a positive integer and defaults to `30`. `PAYPAL_SIMULATION_ENABLED` accepts `true` or `false` and defaults to `true`; disabling it makes PayPal provider actions fail without changing checkout persistence.
+`RETURN_WINDOW_DAYS` is a positive integer and defaults to `30`. `SHIPMENT_ETA_DAYS` is a positive integer and defaults to `3`; Phase 1 uses it only when the internal Shipment foundation service is invoked. `PAYPAL_SIMULATION_ENABLED` accepts `true` or `false` and defaults to `true`; disabling it makes PayPal provider actions fail without changing checkout persistence.
 
 ## Security model
 

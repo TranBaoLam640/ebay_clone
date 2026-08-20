@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { USER_STATUS } from '../../common/constants/user-status.js';
+import { USER_ROLES } from '../../common/constants/user-roles.js';
 const schema = new mongoose.Schema(
   {
     email: {
@@ -13,7 +14,7 @@ const schema = new mongoose.Schema(
     fullName: { type: String, required: true, trim: true },
     phone: String,
     avatarUrl: String,
-    role: { type: String, enum: ['USER', 'ADMIN'], default: 'USER' },
+    role: { type: String, enum: USER_ROLES, default: 'USER' },
     status: {
       type: String,
       enum: Object.values(USER_STATUS),

@@ -341,7 +341,7 @@ export const schemas = {
       fullName: { type: 'string' },
       phone: { type: 'string', nullable: true },
       avatarUrl: { type: 'string', format: 'uri', nullable: true },
-      role: { type: 'string', enum: ['USER', 'ADMIN'] },
+      role: { type: 'string', enum: ['USER', 'ADMIN', 'SHIPPER'] },
       status: { type: 'string' },
       isEmailVerified: { type: 'boolean' },
       sellerProfile: {

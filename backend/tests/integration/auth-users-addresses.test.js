@@ -129,7 +129,10 @@ describe('auth', () => {
     const user = await User.findOne({ email: 'user@example.com' });
     expect(user.isEmailVerified).toBe(false);
     expect(User.schema.path('role').options).toEqual(
-      expect.objectContaining({ enum: ['USER', 'ADMIN'], default: 'USER' }),
+      expect.objectContaining({
+        enum: ['USER', 'ADMIN', 'SHIPPER'],
+        default: 'USER',
+      }),
     );
     expect(User.schema.path('fullName').options.required).toBe(true);
   });

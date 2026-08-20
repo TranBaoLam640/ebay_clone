@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { paths } from '@/routes/paths';
-import { Icon } from '@/components/icon';
+import { Icon, type IconVariant } from '@/components/icon';
 import { BrandLogo } from '@/components/brand-logo';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { LanguageSwitcher } from '@/components/language-switcher';
@@ -156,6 +156,11 @@ export function SiteHeader() {
                     <MenuLink to={paths.account.notifications} icon="icon-bell" onClick={() => setMenuOpen(false)}>
                       {t('header.notifications')}
                     </MenuLink>
+                    {user?.role === 'SHIPPER' && (
+                      <MenuLink to={paths.shipper.shipments} icon="icon-truck" onClick={() => setMenuOpen(false)}>
+                        {t('header.shipperDashboard', { defaultValue: 'Shipper Dashboard' })}
+                      </MenuLink>
+                    )}
                     <button
                       onClick={() => {
                         logout.mutate();
@@ -243,7 +248,7 @@ function MenuLink({
   onClick,
 }: {
   to: string;
-  icon: 'icon-user' | 'icon-map-pin' | 'icon-mail' | 'icon-bell';
+  icon: IconVariant;
   children: React.ReactNode;
   onClick: () => void;
 }) {

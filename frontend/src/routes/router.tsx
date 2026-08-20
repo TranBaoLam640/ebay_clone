@@ -25,6 +25,8 @@ const MessagesPage = lazy(() => import('@/features/messages/pages/messages-page'
 const MyBidsPage = lazy(() => import('@/features/account/pages/my-bids-page'));
 const MyOffersPage = lazy(() => import('@/features/account/pages/my-offers-page'));
 const SellerFeedbacksPage = lazy(() => import('@/features/sellers/pages/seller-feedbacks-page'));
+const SellerShipmentsPage = lazy(() => import('@/features/shipping/pages/seller-shipments-page'));
+const ShipperShipmentsPage = lazy(() => import('@/features/shipping/pages/shipper-shipments-page'));
 const CheckoutPage = lazy(() => import('@/features/checkout/pages/checkout-page'));
 const OrdersPage = lazy(() => import('@/features/checkout/pages/orders-page'));
 const OrderDetailPage = lazy(() => import('@/features/checkout/pages/order-detail-page'));
@@ -73,9 +75,16 @@ export const router = createBrowserRouter([
               { path: 'bids', element: <Lazy><MyBidsPage /></Lazy> },
               { path: 'offers', element: <Lazy><MyOffersPage /></Lazy> },
               { path: 'seller-feedbacks', element: <Lazy><SellerFeedbacksPage /></Lazy> },
+              { path: 'seller-shipments', element: <Lazy><SellerShipmentsPage /></Lazy> },
               { path: 'notifications', element: <Lazy><NotificationsPage /></Lazy> },
             ],
           },
+        ],
+      },
+      {
+        element: <ProtectedRoute roles={['SHIPPER']} />,
+        children: [
+          { path: '/shipper/shipments', element: <Lazy><ShipperShipmentsPage /></Lazy> },
         ],
       },
       { path: '*', element: <Lazy><NotFoundPage /></Lazy> },

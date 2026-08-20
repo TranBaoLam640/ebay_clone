@@ -507,6 +507,20 @@ describe('User 4 checkout, payment, orders, and returns', () => {
         eventKey: `${USER4_NOTIFICATION_EVENTS.COD_CONFIRMED}:${response.body.data._id}`,
       }),
     ]);
+    const shipmentReadyNotifications = await models.Notification.find({
+      eventType: USER4_NOTIFICATION_EVENTS.SHIPMENT_READY,
+    }).lean();
+    expect(shipmentReadyNotifications).toHaveLength(2);
+    expect(
+      shipmentReadyNotifications.map((notification) => notification.eventKey),
+    ).toEqual(
+      expect.arrayContaining(
+        shipments.map(
+          (shipment) =>
+            `${USER4_NOTIFICATION_EVENTS.SHIPMENT_READY}:${shipment._id}:BUYER`,
+        ),
+      ),
+    );
   });
 
   it('replays exactly once and rejects key reuse with another payload', async () => {
@@ -770,6 +784,20 @@ describe('User 4 checkout, payment, orders, and returns', () => {
         eventKey: `${USER4_NOTIFICATION_EVENTS.PAYPAL_CAPTURED}:${id}`,
       }),
     ]);
+    expect(
+      await models.Notification.find({
+        eventType: USER4_NOTIFICATION_EVENTS.SHIPMENT_READY,
+      }).lean(),
+    ).toEqual([
+      expect.objectContaining({
+        userId: ids.buyer,
+        type: 'ORDER',
+        referenceType: 'Order',
+        referenceId: shipment.orderId,
+        eventType: USER4_NOTIFICATION_EVENTS.SHIPMENT_READY,
+        eventKey: `${USER4_NOTIFICATION_EVENTS.SHIPMENT_READY}:${shipment._id}:BUYER`,
+      }),
+    ]);
     await paymentAction(agent, 'cod/confirm', id).expect(409);
   });
 
@@ -822,6 +850,56 @@ describe('User 4 checkout, payment, orders, and returns', () => {
       .get(`${prefix}/shipments?scope=available`)
       .expect(200);
     expect(availableAfterPickup.body.data).toEqual([]);
+  });
+
+  it('exposes buyer order shipment visibility and legacy shipment nulls', async () => {
+    const { agent, order, shipment } =
+      await createConfirmedShipment('buyer-shipment-read');
+    const detail = await agent
+      .get(`${prefix}/orders/${order._id}`)
+      .expect(200);
+    expect(detail.body.data.shipment).toEqual(
+      expect.objectContaining({
+        _id: String(shipment._id),
+        orderId: String(order._id),
+        buyerId: String(ids.buyer),
+        sellerId: String(ids.seller),
+        status: 'READY_FOR_PICKUP',
+      }),
+    );
+    const list = await agent.get(`${prefix}/orders`).expect(200);
+    expect(list.body.data.find((item) => item._id === String(order._id))).toEqual(
+      expect.objectContaining({
+        shipment: expect.objectContaining({
+          _id: String(shipment._id),
+          trackingNumber: shipment.trackingNumber,
+        }),
+      }),
+    );
+    const legacy = await agent
+      .get(`${prefix}/orders/${ids.deliveredOrder}`)
+      .expect(200);
+    expect(legacy.body.data.shipment).toBeNull();
+  });
+
+  it('lets sellers read only shipment visibility for their seller profile', async () => {
+    const { shipment } = await createConfirmedShipment('seller-shipment-read');
+    const seller = await login('seller@example.test');
+    const seller2 = await login('seller2@example.test');
+    const buyer = await login();
+
+    const own = await seller.get(`${prefix}/shipments/seller`).expect(200);
+    expect(own.body.data).toEqual([
+      expect.objectContaining({
+        _id: String(shipment._id),
+        sellerId: String(ids.seller),
+        status: 'READY_FOR_PICKUP',
+      }),
+    ]);
+    const other = await seller2.get(`${prefix}/shipments/seller`).expect(200);
+    expect(other.body.data).toEqual([]);
+    const nonSeller = await buyer.get(`${prefix}/shipments/seller`).expect(200);
+    expect(nonSeller.body.data).toEqual([]);
   });
 
   it('atomically claims pickup and rejects invalid pickup states', async () => {
@@ -879,6 +957,33 @@ describe('User 4 checkout, payment, orders, and returns', () => {
     expect(deliveredOrder.deliveredAt.toISOString()).toBe(
       deliveredShipment.deliveredAt.toISOString(),
     );
+    expect(
+      await models.Notification.find({
+        eventType: {
+          $in: [
+            USER4_NOTIFICATION_EVENTS.SHIPMENT_PICKED_UP,
+            USER4_NOTIFICATION_EVENTS.SHIPMENT_DELIVERED,
+          ],
+        },
+      })
+        .sort({ eventType: 1 })
+        .lean(),
+    ).toEqual([
+      expect.objectContaining({
+        userId: ids.buyer,
+        type: 'ORDER',
+        referenceType: 'Order',
+        referenceId: deliveredShipment.orderId,
+        eventKey: `${USER4_NOTIFICATION_EVENTS.SHIPMENT_DELIVERED}:${deliveredShipment._id}:BUYER`,
+      }),
+      expect.objectContaining({
+        userId: ids.buyer,
+        type: 'ORDER',
+        referenceType: 'Order',
+        referenceId: deliveredShipment.orderId,
+        eventKey: `${USER4_NOTIFICATION_EVENTS.SHIPMENT_PICKED_UP}:${deliveredShipment._id}:BUYER`,
+      }),
+    ]);
   });
 
   it('rolls back shipment delivery when the Order is not confirmed', async () => {

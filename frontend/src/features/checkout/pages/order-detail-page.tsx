@@ -10,6 +10,7 @@ import { ReturnRequestForm, type ReturnFormValue } from '../components/return-re
 import { useReviewMutations } from '@/features/product-detail/hooks/use-review-mutations';
 import { ReviewForm } from '@/features/product-detail/components/review-form';
 import { OrderItemSellerFeedbackActions } from '@/features/sellers/components/order-item-seller-feedback-actions';
+import { ShipmentTrackingCard } from '@/features/shipping/components/shipment-tracking-card';
 import { Price } from '@/components/price';
 import { Icon } from '@/components/icon';
 import { Modal } from '@/components/modal';
@@ -173,6 +174,10 @@ export default function OrderDetailPage() {
             {o.shippingAddress.province}
           </p>
         </section>
+      )}
+
+      {(o.shipment || o.orderStatus === 'CONFIRMED' || o.orderStatus === 'DELIVERED') && (
+        <ShipmentTrackingCard shipment={o.shipment} />
       )}
 
       {/* Items */}

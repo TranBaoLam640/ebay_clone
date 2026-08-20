@@ -9,6 +9,7 @@ import * as checkoutRepository from '../checkout/checkout.repository.js';
 import * as checkoutGroupService from '../checkout-groups/checkout-group.service.js';
 import * as paymentRepository from '../payments/payment.repository.js';
 import * as addressRepository from '../addresses/repository.js';
+import * as shipmentRepository from '../shipments/shipment.repository.js';
 import { toAddressSnapshot } from '../addresses/address.mapper.js';
 
 /**
@@ -70,6 +71,23 @@ const enrichItems = async (orders) => {
   }));
 };
 
+const attachShipments = async (orders) => {
+  if (orders.length === 0) return orders;
+  const shipments = await shipmentRepository.findByOrderIds(
+    orders.map((order) => order._id),
+  );
+  const shipmentByOrderId = new Map(
+    shipments.map((shipment) => [
+      String(shipment.orderId),
+      shipmentRepository.toPublic(shipment),
+    ]),
+  );
+  return orders.map((order) => ({
+    ...order,
+    shipment: shipmentByOrderId.get(String(order._id)) ?? null,
+  }));
+};
+
 export const list = async (buyerId, query) => {
   const { page, limit } = pagination(query);
   const [items, total] = await Promise.all([
@@ -77,7 +95,9 @@ export const list = async (buyerId, query) => {
     repository.countOwned(buyerId, query),
   ]);
   return {
-    items: (await enrichItems(items)).map(repository.toPublic),
+    items: (await attachShipments(await enrichItems(items))).map(
+      repository.toPublic,
+    ),
     meta: paginationMeta(page, limit, total),
   };
 };
@@ -85,7 +105,7 @@ export const list = async (buyerId, query) => {
 export const get = async (buyerId, id) => {
   const order = await repository.findOwnedPublic(buyerId, id);
   if (!order) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Order not found');
-  const [enriched] = await enrichItems([order]);
+  const [enriched] = await attachShipments(await enrichItems([order]));
   return repository.toPublic(enriched);
 };
 

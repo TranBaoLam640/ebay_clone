@@ -30,6 +30,19 @@ export const shipmentPaths = {
       security: security.access,
     }),
   },
+  '/shipments/seller': {
+    get: operation({
+      tag: 'Shipments',
+      operationId: 'listSellerShipments',
+      summary: 'List seller shipment visibility',
+      description:
+        'Authenticated seller read-only shipment view. Returns shipments whose sellerId belongs to the authenticated user seller profile. Non-seller users receive an empty list.',
+      parameters: pageParams,
+      success: response('Seller shipments', collection('Shipment'), true),
+      errors: [400, 401, 429, 500],
+      security: security.access,
+    }),
+  },
   '/shipments/{shipmentId}/pickup': {
     patch: operation({
       tag: 'Shipments',

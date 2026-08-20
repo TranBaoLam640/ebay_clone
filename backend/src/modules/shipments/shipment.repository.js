@@ -58,6 +58,18 @@ export const countByShipper = (shipperId, session) =>
     status: { $in: ['IN_TRANSIT', 'DELIVERED'] },
   }).session(session || null);
 
+export const listBySeller = (sellerId, skip, limit, session) =>
+  Shipment.find({ sellerId })
+    .select(publicProjection)
+    .sort({ createdAt: -1, _id: -1 })
+    .skip(skip)
+    .limit(limit)
+    .session(session || null)
+    .lean();
+
+export const countBySeller = (sellerId, session) =>
+  Shipment.countDocuments({ sellerId }).session(session || null);
+
 export const findById = (id, session) =>
   Shipment.findById(id)
     .select(publicProjection)
@@ -66,6 +78,12 @@ export const findById = (id, session) =>
 
 export const findByOrderId = (orderId, session) =>
   Shipment.findOne({ orderId })
+    .select(publicProjection)
+    .session(session || null)
+    .lean();
+
+export const findByOrderIds = (orderIds, session) =>
+  Shipment.find({ orderId: { $in: orderIds } })
     .select(publicProjection)
     .session(session || null)
     .lean();

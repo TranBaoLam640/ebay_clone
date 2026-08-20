@@ -3,8 +3,11 @@ import { AppError } from '../../common/errors/app-error.js';
 import { ERROR_CODES } from '../../common/constants/error-codes.js';
 import { pagination, paginationMeta } from '../../common/utils/pagination.js';
 import { env } from '../../config/env.js';
+import { USER4_NOTIFICATION_EVENTS } from '../../common/constants/user4-notification-events.js';
 import * as checkoutRepository from '../checkout/checkout.repository.js';
+import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
+import * as sellerRepository from '../sellers/seller.repository.js';
 import { SHIPMENT_CARRIERS, TRACKING_PREFIX } from './shipment.constants.js';
 import * as repository from './shipment.repository.js';
 
@@ -29,6 +32,28 @@ const notFound = () =>
 
 const invalidState = (message) =>
   new AppError(409, ERROR_CODES.SHIPMENT_INVALID_STATE, message);
+
+const shipmentNotification = (
+  buyerId,
+  shipment,
+  eventType,
+  title,
+  message,
+  session,
+) =>
+  notificationService.createNotification(
+    buyerId,
+    {
+      type: 'ORDER',
+      title,
+      message,
+      referenceType: 'Order',
+      referenceId: shipment.orderId,
+      eventType,
+      eventKey: `${eventType}:${shipment._id}:BUYER`,
+    },
+    session,
+  );
 
 export const createForOrder = async (
   order,
@@ -89,18 +114,40 @@ export const listForShipper = async (shipperId, query) => {
   return { items, meta: paginationMeta(page, limit, total) };
 };
 
-export const pickup = async (shipperId, shipmentId) => {
-  const existing = await repository.findById(shipmentId);
-  if (!existing) throw notFound();
-  const pickedUpAt = new Date();
-  const claimed = await repository.claimForPickup(
-    shipmentId,
-    shipperId,
-    pickedUpAt,
-  );
-  if (!claimed) throw invalidState('Shipment is not available for pickup');
-  return claimed;
+export const listForSeller = async (userId, query) => {
+  const { page, limit } = pagination(query);
+  const seller = await sellerRepository.findByUserId(userId);
+  if (!seller) return { items: [], meta: paginationMeta(page, limit, 0) };
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    repository.listBySeller(seller._id, skip, limit),
+    repository.countBySeller(seller._id),
+  ]);
+  return { items, meta: paginationMeta(page, limit, total) };
 };
+
+export const pickup = (shipperId, shipmentId) =>
+  checkoutRepository.transaction(async (session) => {
+    const existing = await repository.findById(shipmentId, session);
+    if (!existing) throw notFound();
+    const pickedUpAt = new Date();
+    const claimed = await repository.claimForPickup(
+      shipmentId,
+      shipperId,
+      pickedUpAt,
+      session,
+    );
+    if (!claimed) throw invalidState('Shipment is not available for pickup');
+    await shipmentNotification(
+      claimed.buyerId,
+      claimed,
+      USER4_NOTIFICATION_EVENTS.SHIPMENT_PICKED_UP,
+      'Shipment picked up',
+      'Your order is now in transit with SBay Express',
+      session,
+    );
+    return claimed;
+  });
 
 export const deliver = (shipperId, shipmentId) =>
   checkoutRepository.transaction(async (session) => {
@@ -126,5 +173,13 @@ export const deliver = (shipperId, shipmentId) =>
     );
     if (!order)
       throw invalidState('Order is not confirmed for shipment delivery');
+    await shipmentNotification(
+      delivered.buyerId,
+      delivered,
+      USER4_NOTIFICATION_EVENTS.SHIPMENT_DELIVERED,
+      'Shipment delivered',
+      'Your order was delivered',
+      session,
+    );
     return delivered;
   });

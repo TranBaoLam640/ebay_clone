@@ -24,5 +24,9 @@ export const paths = {
     bids: '/account/bids',
     offers: '/account/offers',
     sellerFeedbacks: '/account/seller-feedbacks',
+    sellerShipments: '/account/seller-shipments',
+  },
+  shipper: {
+    shipments: '/shipper/shipments',
   },
 } as const;

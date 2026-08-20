@@ -15,6 +15,17 @@ export const listSchema = z.object({
     .strict(),
 });
 
+export const sellerListSchema = z.object({
+  body: z.any(),
+  params: empty,
+  query: z
+    .object({
+      page: z.coerce.number().int().positive().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    })
+    .strict(),
+});
+
 export const actionSchema = z.object({
   body: z.any(),
   params: z.object({ shipmentId: objectId }),

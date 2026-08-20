@@ -76,6 +76,7 @@ export const EXPECTED_ROUTE_INVENTORY = [
   'GET /api/v1/returns',
   'GET /api/v1/returns/{returnId}',
   'GET /api/v1/shipments',
+  'GET /api/v1/shipments/seller',
   'PATCH /api/v1/shipments/{shipmentId}/pickup',
   'PATCH /api/v1/shipments/{shipmentId}/deliver',
   'GET /api/v1/conversations',

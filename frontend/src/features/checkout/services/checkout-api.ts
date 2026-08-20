@@ -1,6 +1,10 @@
 import { apiGet, apiMutate } from '@/services/api-client';
 import type { ServerCartItem } from '@/features/cart/services/cart-api';
 import type { CatalogProductSummary } from '@/features/catalog/types/catalog.types';
+import {
+  normalizeShipment,
+  type Shipment,
+} from '@/features/shipping/services/shipment-api';
 
 export type PaymentMethod = 'COD' | 'PAYPAL';
 
@@ -153,6 +157,7 @@ export interface OrderSummary {
   sellerId: string;
   /** Whether this order already has seller feedback (one rating per order). */
   sellerRated: boolean;
+  shipment: Shipment | null;
   items: OrderItem[];
 }
 
@@ -168,6 +173,9 @@ function normalizeOrder<T extends OrderSummary>(raw: Record<string, unknown>): T
     ...raw,
     id: (raw._id ?? raw.id) as string,
     sellerRated: Boolean(raw.sellerRated),
+    shipment: normalizeShipment(
+      raw.shipment as Record<string, unknown> | null | undefined,
+    ),
     items: ((raw.items ?? []) as Record<string, unknown>[]).map((it) => ({
       id: (it._id ?? it.id) as string,
       productId: it.productId as string,

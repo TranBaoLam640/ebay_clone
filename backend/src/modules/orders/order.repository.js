@@ -89,6 +89,7 @@ export const toPublic = (order) => {
     }),
     ...(source.deliveredAt && { deliveredAt: source.deliveredAt }),
     ...(source.offerId && { offerId: source.offerId }),
+    ...(source.shipment !== undefined && { shipment: source.shipment ?? null }),
     items: (source.items || []).map(toItemPublic),
     createdAt: source.createdAt,
     updatedAt: source.updatedAt,

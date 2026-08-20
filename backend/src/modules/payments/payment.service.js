@@ -71,6 +71,21 @@ const paymentNotification = (
     session,
   );
 
+const shipmentReadyNotification = (buyerId, shipment, session) =>
+  notificationService.createNotification(
+    buyerId,
+    {
+      type: 'ORDER',
+      title: 'Shipment ready',
+      message: 'Your order is ready for pickup by an SBay shipper',
+      referenceType: 'Order',
+      referenceId: shipment.orderId,
+      eventType: USER4_NOTIFICATION_EVENTS.SHIPMENT_READY,
+      eventKey: `${USER4_NOTIFICATION_EVENTS.SHIPMENT_READY}:${shipment._id}:BUYER`,
+    },
+    session,
+  );
+
 const sendPurchaseFeedbackEmail = async (buyerId, groupId) => {
   try {
     const [buyer, orders] = await Promise.all([
@@ -106,8 +121,13 @@ const confirmOrdersAndCreateShipments = async (
 ) => {
   await orderRepository.markGroupConfirmed(buyerId, groupId, session);
   const orders = await orderRepository.byGroup(buyerId, groupId, session);
-  for (const order of orders)
-    await shipmentService.createForOrder(order, { session, now });
+  for (const order of orders) {
+    const shipment = await shipmentService.createForOrder(order, {
+      session,
+      now,
+    });
+    await shipmentReadyNotification(buyerId, shipment, session);
+  }
 };
 
 export const createPayPal = async (buyerId, groupId) => {

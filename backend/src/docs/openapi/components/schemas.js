@@ -1191,6 +1191,12 @@ export const schemas = {
       shippingAddress: { $ref: '#/components/schemas/AddressSnapshot' },
       deliveredAt: timestamp,
       offerId: objectId,
+      shipment: {
+        allOf: [{ $ref: '#/components/schemas/Shipment' }],
+        nullable: true,
+        description:
+          'Shipment visibility for buyer order reads. Null for legacy orders without a Shipment document.',
+      },
       items: {
         type: 'array',
         items: { $ref: '#/components/schemas/OrderItem' },

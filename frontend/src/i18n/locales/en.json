@@ -41,7 +41,8 @@
     "navHome": "Home",
     "navAllProducts": "All products",
     "navTopRated": "Top rated",
-    "navNewest": "Newest"
+    "navNewest": "Newest",
+    "shipperDashboard": "Shipper Dashboard"
   },
   "topBar": {
     "freeShipping": "Free shipping on orders over 500,000₫",
@@ -320,7 +321,8 @@
     },
     "navBids": "My Bids",
     "navOffers": "My Offers",
-    "navSellerFeedbacks": "Seller Feedback"
+    "navSellerFeedbacks": "Seller Feedback",
+    "navSellerShipments": "Seller Shipments"
   },
   "reviews": {
     "writeReview": "Write a review",

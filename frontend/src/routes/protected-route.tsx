@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/features/auth/hooks/use-auth';
+import type { UserRole } from '@/features/auth/types/auth.types';
 import { paths } from './paths';
 import { Icon } from '@/components/icon';
 
@@ -8,8 +9,8 @@ import { Icon } from '@/components/icon';
  * spinner; unauthenticated users are redirected to login with a `from` state
  * so they can be returned after signing in.
  */
-export function ProtectedRoute() {
-  const { isAuthenticated, isLoading } = useAuth();
+export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
+  const { isAuthenticated, isLoading, user } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -22,6 +23,10 @@ export function ProtectedRoute() {
 
   if (!isAuthenticated) {
     return <Navigate to={paths.login} replace state={{ from: location.pathname }} />;
+  }
+
+  if (roles && (!user?.role || !roles.includes(user.role))) {
+    return <Navigate to={paths.home} replace />;
   }
 
   return <Outlet />;

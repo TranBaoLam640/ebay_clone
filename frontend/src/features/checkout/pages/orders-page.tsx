@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { ordersApi } from '../services/checkout-api';
 import { orderStatusLabel, orderStatusTone } from '../utils/order-status';
+import { shipmentStatusLabel } from '@/features/shipping/utils/shipment-status';
 import { Price } from '@/components/price';
 import { Button } from '@/components/button';
 import { ProductImage } from '@/components/product-image';
@@ -84,6 +85,11 @@ export default function OrdersPage() {
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <Price cents={o.total} className="text-sm" />
+                    {o.shipment && (
+                      <span className="max-w-[11rem] truncate text-right text-[11px] font-medium text-primary">
+                        {shipmentStatusLabel(o.shipment.status)} · {o.shipment.trackingNumber}
+                      </span>
+                    )}
                     <span
                       className={cn(
                         'rounded-full px-2 py-0.5 text-[11px] font-semibold',

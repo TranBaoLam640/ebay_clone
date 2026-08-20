@@ -88,7 +88,23 @@ export function MobileNav({ open, onClose, isAuthenticated, user, onLogout }: Mo
           {isAuthenticated && (
             <>
               <Divider />
-              <MobileNavList items={ACCOUNT} onNavigate={onClose} linkClass={linkClass} />
+              <MobileNavList
+                items={[
+                  ...ACCOUNT,
+                  ...(user?.role === 'SHIPPER'
+                    ? [
+                        {
+                          to: paths.shipper.shipments,
+                          labelKey: 'header.shipperDashboard',
+                          fallback: 'Shipper Dashboard',
+                          icon: 'icon-truck' as const,
+                        },
+                      ]
+                    : []),
+                ]}
+                onNavigate={onClose}
+                linkClass={linkClass}
+              />
             </>
           )}
         </nav>
@@ -123,7 +139,7 @@ function MobileNavList({
   onNavigate,
   linkClass,
 }: {
-  items: { to: string; labelKey: string; icon: IconVariant; end?: boolean }[];
+  items: { to: string; labelKey: string; fallback?: string; icon: IconVariant; end?: boolean }[];
   onNavigate: () => void;
   linkClass: (s: { isActive: boolean }) => string;
 }) {
@@ -134,7 +150,7 @@ function MobileNavList({
         <li key={item.labelKey}>
           <NavLink to={item.to} end={item.end} onClick={onNavigate} className={linkClass}>
             <Icon variant={item.icon} size={18} />
-            {t(item.labelKey)}
+            {t(item.labelKey, { defaultValue: item.fallback })}
           </NavLink>
         </li>
       ))}

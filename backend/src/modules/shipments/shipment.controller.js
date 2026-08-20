@@ -13,6 +13,18 @@ export const list = async (req, res, next) => {
   }
 };
 
+export const listSeller = async (req, res, next) => {
+  try {
+    const result = await service.listForSeller(
+      req.user.id,
+      req.validated.query,
+    );
+    success(res, result.items, 200, result.meta);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const pickup = async (req, res, next) => {
   try {
     success(

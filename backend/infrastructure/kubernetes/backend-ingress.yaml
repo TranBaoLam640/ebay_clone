@@ -14,7 +14,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: REPLACE-with-cloudflare-hostname   # e.g. api.yourdomain.com
+    - host: api-sbay.wdchocopie.id.vn   # e.g. api.yourdomain.com
       http:
         paths:
           - path: /

@@ -38,7 +38,9 @@ export function ShipmentTrackingCard({
             {title}
           </h3>
           <p className="mt-1 text-sm text-muted">
-            {shipment.carrier} · {shipment.trackingNumber}
+            {shipment.carrier && shipment.trackingNumber
+              ? `${shipment.carrier} | ${shipment.trackingNumber}`
+              : 'Tracking details are protected for this buyer view.'}
           </p>
         </div>
         <span

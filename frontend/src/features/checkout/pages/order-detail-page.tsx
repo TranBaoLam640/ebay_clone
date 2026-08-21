@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ordersApi, type OrderItem } from '../services/checkout-api';
@@ -11,6 +11,9 @@ import { useReviewMutations } from '@/features/product-detail/hooks/use-review-m
 import { ReviewForm } from '@/features/product-detail/components/review-form';
 import { OrderItemSellerFeedbackActions } from '@/features/sellers/components/order-item-seller-feedback-actions';
 import { ShipmentTrackingCard } from '@/features/shipping/components/shipment-tracking-card';
+import { BuyerInrRequestModal } from '@/features/inr/components/buyer-inr-request-modal';
+import { ContactSellerTopicsModal, MoreActionsButton } from '@/features/inr/components/contact-seller-topics-modal';
+import { useBuyerInrRequests } from '@/features/inr/hooks/use-inr-requests';
 import { Price } from '@/components/price';
 import { Icon } from '@/components/icon';
 import { Modal } from '@/components/modal';
@@ -28,6 +31,7 @@ import { cn } from '@/utils/cn';
 export default function OrderDetailPage() {
   const { t } = useTranslation();
   const { orderId } = useParams();
+  const navigate = useNavigate();
   const { notify } = useToast();
   const order = useQuery({
     queryKey: ['order', orderId],
@@ -37,12 +41,15 @@ export default function OrderDetailPage() {
 
   const { create: createReview } = useReviewMutations();
   const { list: returns, create: createReturn } = useReturns();
+  const buyerInrRequests = useBuyerInrRequests({ limit: 100 });
   // Review modal targets one item; returns remain per-order.
   const [reviewItem, setReviewItem] = useState<OrderItem | null>(null);
+  const [contactItem, setContactItem] = useState<OrderItem | null>(null);
+  const [inrItem, setInrItem] = useState<OrderItem | null>(null);
   const [returnOpen, setReturnOpen] = useState(false);
   const contactSeller = useMutation({
     mutationFn: (productId: string) => messagingApi.createConversation({ productId, orderId: orderId! }),
-    onSuccess: (conversation) => window.location.assign(paths.message(conversation.id)),
+    onSuccess: (conversation) => navigate(paths.message(conversation.id)),
     onError: (err) => notify(messageFromError(err), 'error'),
   });
 
@@ -74,6 +81,8 @@ export default function OrderDetailPage() {
   const canReviewOrReturn = o.orderStatus === 'DELIVERED';
   // The backend allows one return request per order — find this order's, if any.
   const existingReturn = returns.data?.find((r) => r.orderId === o.id) ?? null;
+  const openInrForItem = (itemId: string) =>
+    buyerInrRequests.data?.items.find((r) => r.orderId === o.id && r.orderItemId === itemId && r.status === 'OPEN') ?? null;
 
   const submitReview = async (value: {
     rating: number;
@@ -215,39 +224,33 @@ export default function OrderDetailPage() {
                     <span className="line-clamp-2 text-sm font-medium text-text">{title || '-'}</span>
                   )}
                   <p className="mt-0.5 text-xs text-muted">{t('checkout.qty', { count: it.quantity })}</p>
-                  {/* Reviewing is per-item (one review each); returns are per-order.
-                      Once reviewed, keep the button but disable it (label flips). */}
-                  {canReviewOrReturn && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {it.productReviewAvailable && it.productUuid && (it.canWriteProductReview || it.productReview) && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={Boolean(it.productReview)}
-                          onClick={() => setReviewItem(it)}
-                        >
-                          <Icon variant={it.productReview ? 'icon-check' : 'icon-star'} size={14} />
-                          {it.productReview ? t('reviews.reviewed') : t('reviews.writeReview')}
-                        </Button>
-                      )}
-                      {it.productUuid && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          loading={contactSeller.isPending}
-                          onClick={() => contactSeller.mutate(it.productUuid!)}
-                        >
-                          <Icon variant="icon-mail" size={14} />
-                          Contact Seller
-                        </Button>
-                      )}
-                      <OrderItemSellerFeedbackActions
-                        orderId={o.id}
-                        orderItemId={it.id}
-                        sellerId={o.sellerId}
-                      />
-                    </div>
-                  )}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {/* Reviewing is per-item (one review each); returns are per-order.
+                        Once reviewed, keep the button but disable it (label flips). */}
+                    {canReviewOrReturn && (
+                      <>
+                        {it.productReviewAvailable && it.productUuid && (it.canWriteProductReview || it.productReview) && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={Boolean(it.productReview)}
+                            onClick={() => setReviewItem(it)}
+                          >
+                            <Icon variant={it.productReview ? 'icon-check' : 'icon-star'} size={14} />
+                            {it.productReview ? t('reviews.reviewed') : t('reviews.writeReview')}
+                          </Button>
+                        )}
+                        <OrderItemSellerFeedbackActions
+                          orderId={o.id}
+                          orderItemId={it.id}
+                          sellerId={o.sellerId}
+                        />
+                      </>
+                    )}
+                    {it.productUuid && ['CONFIRMED', 'DELIVERED'].includes(o.orderStatus) && (
+                      <MoreActionsButton onClick={() => setContactItem(it)} />
+                    )}
+                  </div>
                 </div>
                 {lineTotal != null && <Price cents={lineTotal} className="shrink-0 text-sm" />}
               </li>
@@ -351,6 +354,33 @@ export default function OrderDetailPage() {
           onCancel={() => setReturnOpen(false)}
         />
       </Modal>
+
+      <ContactSellerTopicsModal
+        open={!!contactItem}
+        item={contactItem}
+        messageLoading={contactSeller.isPending}
+        canReturn={canReviewOrReturn}
+        onClose={() => setContactItem(null)}
+        onMessage={() => {
+          if (contactItem?.productUuid) contactSeller.mutate(contactItem.productUuid);
+        }}
+        onItemNotReceived={() => {
+          setInrItem(contactItem);
+          setContactItem(null);
+        }}
+        onReturn={() => {
+          setContactItem(null);
+          setReturnOpen(true);
+        }}
+      />
+
+      <BuyerInrRequestModal
+        open={!!inrItem}
+        order={o}
+        item={inrItem}
+        existingRequest={inrItem ? openInrForItem(inrItem.id) : null}
+        onClose={() => setInrItem(null)}
+      />
     </div>
   );
 }

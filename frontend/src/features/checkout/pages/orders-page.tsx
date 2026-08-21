@@ -87,7 +87,7 @@ export default function OrdersPage() {
                     <Price cents={o.total} className="text-sm" />
                     {o.shipment && (
                       <span className="max-w-[11rem] truncate text-right text-[11px] font-medium text-primary">
-                        {shipmentStatusLabel(o.shipment.status)} · {o.shipment.trackingNumber}
+                        {shipmentStatusLabel(o.shipment.status)}
                       </span>
                     )}
                     <span

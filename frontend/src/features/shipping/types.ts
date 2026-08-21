@@ -6,8 +6,8 @@ export interface Shipment {
   buyerId: string;
   sellerId: string;
   shipperId: string | null;
-  carrier: string;
-  trackingNumber: string;
+  carrier?: string;
+  trackingNumber?: string;
   status: ShipmentStatus;
   estimatedDeliveryAt: string;
   pickedUpAt: string | null;

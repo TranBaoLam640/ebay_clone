@@ -6,6 +6,7 @@ export type NotificationType =
   | 'ORDER'
   | 'PAYMENT'
   | 'RETURN'
+  | 'DISPUTE'
   | 'PROMOTION'
   | 'SYSTEM'
   | 'AUCTION';

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '@/components/icon';
 import { useNotifications, useNotificationActions, useUnreadCount } from '../hooks/use-notifications';
+import { notificationTarget } from '../utils/notification-target';
 import { formatRelative } from '@/utils/format-date';
 import { paths } from '@/routes/paths';
 import { cn } from '@/utils/cn';
@@ -53,10 +54,16 @@ export function NotificationBell() {
               {(data?.items.length ?? 0) === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-muted">{t('notifications.empty')}</p>
               ) : (
-                data!.items.map((n, i) => (
-                  <button
+                data!.items.map((n, i) => {
+                  const target = notificationTarget(n);
+                  return (
+                  <Link
                     key={n.id ?? i}
-                    onClick={() => n.id && !n.isRead && markRead.mutate(n.id)}
+                    to={target ?? paths.account.notifications}
+                    onClick={() => {
+                      setOpen(false);
+                      if (n.id && !n.isRead) markRead.mutate(n.id);
+                    }}
                     className={cn(
                       'flex w-full flex-col gap-0.5 border-b border-border px-4 py-3 text-left hover:bg-surface-2',
                       !n.isRead && 'bg-primary/5',
@@ -68,8 +75,9 @@ export function NotificationBell() {
                     </span>
                     <span className="line-clamp-2 text-xs text-muted">{n.message}</span>
                     <span className="text-[11px] text-muted">{formatRelative(n.createdAt)}</span>
-                  </button>
-                ))
+                  </Link>
+                  );
+                })
               )}
             </div>
 

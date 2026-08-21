@@ -15,6 +15,7 @@ export const paths = {
   orders: '/account/orders',
   order: (id: string) => `/account/orders/${id}`,
   orderCheckout: (id: string) => `/account/orders/${id}/checkout`,
+  inrRequest: (id: string) => `/account/inr-requests/${id}`,
   account: {
     root: '/account',
     profile: '/account/profile',
@@ -25,6 +26,8 @@ export const paths = {
     offers: '/account/offers',
     sellerFeedbacks: '/account/seller-feedbacks',
     sellerShipments: '/account/seller-shipments',
+    requestsDisputes: '/account/requests-disputes',
+    requestDispute: (id: string) => `/account/requests-disputes/${id}`,
   },
   shipper: {
     shipments: '/shipper/shipments',

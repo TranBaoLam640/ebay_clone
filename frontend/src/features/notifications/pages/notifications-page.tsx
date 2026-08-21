@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useNotifications, useNotificationActions } from '../hooks/use-notifications';
 import type { NotificationType } from '../services/notification-api';
+import { notificationTarget } from '../utils/notification-target';
 import { Button } from '@/components/button';
 import { Badge } from '@/components/badge';
 import { Pagination } from '@/components/pagination';
@@ -27,6 +29,7 @@ export default function NotificationsPage() {
     ORDER: t('notifications.typeOrder'),
     PAYMENT: t('notifications.typePayment'),
     RETURN: t('notifications.typeReturn'),
+    DISPUTE: 'Dispute',
     PROMOTION: t('notifications.typePromotion'),
     SYSTEM: t('notifications.typeSystem'),
     AUCTION: t('notifications.typeAuction'),
@@ -76,14 +79,9 @@ export default function NotificationsPage() {
         <EmptyState icon="icon-bell" title={t('notifications.empty')} />
       ) : (
         <ul className="flex flex-col gap-2">
-          {data!.items.map((n, i) => (
-            <li
-              key={n.id ?? i}
-              className={cn(
-                'flex items-start gap-3 rounded-lg border border-border bg-surface p-4',
-                !n.isRead && 'border-primary/30 bg-primary/5',
-              )}
-            >
+          {data!.items.map((n, i) => {
+            const target = notificationTarget(n);
+            const content = (
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <Badge tone="neutral">{TYPE_LABEL[n.type]}</Badge>
@@ -92,13 +90,30 @@ export default function NotificationsPage() {
                 <p className="mt-1.5 font-semibold text-text">{n.title}</p>
                 <p className="text-sm text-muted">{n.message}</p>
               </div>
-              {!n.isRead && n.id && (
-                <Button variant="ghost" size="sm" onClick={() => markRead.mutate(n.id)}>
-                  {t('notifications.markRead')}
-                </Button>
-              )}
-            </li>
-          ))}
+            );
+            return (
+              <li
+                key={n.id ?? i}
+                className={cn(
+                  'flex items-start gap-3 rounded-lg border border-border bg-surface p-4',
+                  !n.isRead && 'border-primary/30 bg-primary/5',
+                )}
+              >
+                {target ? (
+                  <Link to={target} className="min-w-0 flex-1 hover:text-primary">
+                    {content}
+                  </Link>
+                ) : (
+                  content
+                )}
+                {!n.isRead && n.id && (
+                  <Button variant="ghost" size="sm" onClick={() => markRead.mutate(n.id)}>
+                    {t('notifications.markRead')}
+                  </Button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 

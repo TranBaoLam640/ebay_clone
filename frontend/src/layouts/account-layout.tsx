@@ -24,6 +24,11 @@ export function AccountLayout() {
             label: t('account.navSellerShipments', { defaultValue: 'Seller Shipments' }),
             icon: 'icon-truck' as const,
           },
+          {
+            to: paths.account.requestsDisputes,
+            label: 'Requests & Disputes',
+            icon: 'icon-headset' as const,
+          },
           { to: paths.account.sellerFeedbacks, label: t('account.navSellerFeedbacks'), icon: 'icon-star' as const },
         ]
       : []),

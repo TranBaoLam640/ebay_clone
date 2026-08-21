@@ -116,7 +116,7 @@ jobs:
 
       - name: Build frontend
         env:
-          VITE_API_BASE_URL: https://api.sbay.wdchocopie.id.vn/api/v1
+          VITE_API_BASE_URL: https://api-sbay.wdchocopie.id.vn/api/v1
         run: npm run build
 
   # =========================================================
@@ -157,7 +157,7 @@ jobs:
           tags: ${{ steps.frontend-meta.outputs.tags }}
           labels: ${{ steps.frontend-meta.outputs.labels }}
           build-args: |
-            VITE_API_BASE_URL=https://api.sbay.wdchocopie.id.vn/api/v1
+            VITE_API_BASE_URL=https://api-sbay.wdchocopie.id.vn/api/v1
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

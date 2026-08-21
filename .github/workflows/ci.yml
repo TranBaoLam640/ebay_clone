@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "frontend/**"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
 
@@ -13,50 +14,117 @@ permissions:
   packages: write
 
 jobs:
-  test:
+  # =========================
+  # Backend CI
+  # =========================
+  backend-test:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: backend/package-lock.json
+
       - run: npm ci
-      # eslint only (catches real bugs); Prettier formatting is a local convenience,
-      # not a deploy blocker — run `npm run format` locally to tidy style.
       - run: npx eslint .
       - run: npm test
 
-  build-push:
-    needs: test
+  backend-build-push:
+    needs: backend-test
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: docker/setup-buildx-action@v3
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: docker/metadata-action@v5
-        id: meta
+        id: backend-meta
         with:
           images: ghcr.io/tranbaolam640/sbay-backend
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
-            # Sortable, unique-per-build tag. Keel watches glob:build-* and reliably
-            # detects each new tag by NAME (avoids the flaky :latest digest-diff path).
             type=raw,value=build-{{date 'YYYYMMDDHHmmss'}}
+
       - uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.backend-meta.outputs.tags }}
+          labels: ${{ steps.backend-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # =========================
+  # Frontend CI
+  # =========================
+  frontend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+
+      - name: Build frontend
+        env:
+          VITE_API_BASE_URL: https://api.sbay.wdchocopie.id.vn/api/v1
+        run: npm run build
+
+  frontend-build-push:
+    needs: frontend-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: frontend-meta
+        with:
+          images: ghcr.io/tranbaolam640/sbay-frontend
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.frontend-meta.outputs.tags }}
+          labels: ${{ steps.frontend-meta.outputs.labels }}
+          build-args: |
+            VITE_API_BASE_URL=https://api.sbay.wdchocopie.id.vn/api/v1
           cache-from: type=gha
           cache-to: type=gha,mode=max

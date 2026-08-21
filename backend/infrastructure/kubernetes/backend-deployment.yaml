@@ -26,8 +26,6 @@ spec:
       labels:
         app: backend
     spec:
-      imagePullSecrets:
-        - name: ghcr
       terminationGracePeriodSeconds: 30
       initContainers:
         # Block startup until Mongo is PRIMARY — the app calls connectDatabase()

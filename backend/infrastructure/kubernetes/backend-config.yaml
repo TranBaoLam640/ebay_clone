@@ -15,7 +15,7 @@ data:
   COOKIE_SAME_SITE: 'lax'
   # REQUIRED (no default) — exact CORS allowlist; comma-separate multiple origins (no trailing slash).
   # e.g. prod frontend + local dev: "https://app.example.com,http://localhost:3000"
-  CLIENT_ORIGIN: 'https://REPLACE-with-frontend-origin,http://localhost:3000'
+  CLIENT_ORIGIN: 'https://sbay.wdchocopie.id.vn,http://localhost:5173'
   # MongoDB StatefulSet (in-cluster). Credentials live in the Secret.
   MONGODB_HOST: 'mongodb-0.mongodb.sbay.svc.cluster.local'
   MONGODB_PORT: '27017'
@@ -27,9 +27,9 @@ data:
   EMAIL_HOST: 'smtp.gmail.com'
   EMAIL_PORT: '587'
   EMAIL_SECURE: 'false'
-  EMAIL_FROM: 'SDN eBay <REPLACE-with-real-sender>'
+  EMAIL_FROM: 'SDN eBay <lamtranbao202@gmail.com>'
   # MUST be https in production (env.js rejects http:// when NODE_ENV=production).
-  EMAIL_VERIFICATION_URL: 'https://REPLACE-with-frontend/verify-email'
+  EMAIL_VERIFICATION_URL: 'https://sbay.wdchocopie.id.vn/verify-email'
   EMAIL_OTP_TTL_MINUTES: '5'
   EMAIL_OTP_MAX_ATTEMPTS: '5'
   EMAIL_OTP_RESEND_COOLDOWN_SECONDS: '60'
@@ -37,8 +37,8 @@ data:
   RETURN_WINDOW_DAYS: '30'
   PAYPAL_SIMULATION_ENABLED: 'true'
   # Cloudflare R2 object storage. Credentials live in the Secret.
-  R2_ENDPOINT: 'https://<account-id>.r2.cloudflarestorage.com'
+  R2_ENDPOINT: 'https://2284ab1883b7f55aaad99d85611fa28a.r2.cloudflarestorage.com'
   R2_REGION: 'auto'
   R2_BUCKET_NAME: 'sbay-storage'
-  R2_PUBLIC_URL: 'https://<public-r2-base-url>'
+  R2_PUBLIC_URL: 'https://pub-f21c4c9c3c7c494fa104ae26be0b90df.r2.dev'
   UPLOAD_MAX_BYTES: '5242880'

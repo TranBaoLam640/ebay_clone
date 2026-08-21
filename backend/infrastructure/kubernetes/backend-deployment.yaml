@@ -5,12 +5,6 @@ metadata:
   namespace: sbay
   labels:
     app: backend
-  annotations:
-    # Keel auto-updates this Deployment when a newer build-<timestamp> tag appears in GHCR
-    # (pull-based; no SSH). Detecting by tag NAME is reliable, unlike :latest digest-diffing.
-    keel.sh/policy: glob:build-*
-    keel.sh/trigger: poll
-    keel.sh/pollSchedule: '@every 1m'
 spec:
   replicas: 2
   strategy:

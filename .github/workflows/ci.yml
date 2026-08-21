@@ -2,11 +2,13 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "backend/**"
       - "frontend/**"
       - ".github/workflows/ci.yml"
+
   workflow_dispatch:
 
 permissions:
@@ -14,45 +16,60 @@ permissions:
   packages: write
 
 jobs:
-  # =========================
-  # Backend CI
-  # =========================
+  # =========================================================
+  # BACKEND - TEST
+  # =========================================================
   backend-test:
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: backend
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      - run: npm ci
-      - run: npx eslint .
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
 
+      - name: Lint backend
+        run: npx eslint .
+
+      - name: Test backend
+        run: npm test
+
+  # =========================================================
+  # BACKEND - BUILD + PUSH GHCR
+  # =========================================================
   backend-build-push:
     needs: backend-test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v5
+      - name: Backend image metadata
         id: backend-meta
+        uses: docker/metadata-action@v5
         with:
           images: ghcr.io/tranbaolam640/sbay-backend
           tags: |
@@ -60,7 +77,8 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=build-{{date 'YYYYMMDDHHmmss'}}
 
-      - uses: docker/build-push-action@v6
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: true
@@ -69,56 +87,70 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # =========================
-  # Frontend CI
-  # =========================
+  # =========================================================
+  # FRONTEND - TEST + BUILD CHECK
+  # =========================================================
   frontend-test:
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - run: npm ci
-      - run: npm run lint
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
 
       - name: Build frontend
         env:
           VITE_API_BASE_URL: https://api.sbay.wdchocopie.id.vn/api/v1
         run: npm run build
 
+  # =========================================================
+  # FRONTEND - BUILD + PUSH GHCR
+  # =========================================================
   frontend-build-push:
     needs: frontend-test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v5
+      - name: Frontend image metadata
         id: frontend-meta
+        uses: docker/metadata-action@v5
         with:
           images: ghcr.io/tranbaolam640/sbay-frontend
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - uses: docker/build-push-action@v6
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: true
@@ -128,3 +160,59 @@ jobs:
             VITE_API_BASE_URL=https://api.sbay.wdchocopie.id.vn/api/v1
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # =========================================================
+  # CD - DEPLOY TO K3S
+  # =========================================================
+  deploy:
+    needs:
+      - backend-build-push
+      - frontend-build-push
+
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - sbay
+      - k3s
+
+    env:
+      KUBECONFIG: /home/deploy/.kube/config
+
+    steps:
+      - name: Deploy backend
+        run: |
+          k3s kubectl -n sbay set image deployment/backend \
+            backend=ghcr.io/tranbaolam640/sbay-backend:sha-${{ github.sha }}
+
+          k3s kubectl -n sbay rollout status deployment/backend \
+            --timeout=180s
+
+      - name: Deploy frontend
+        run: |
+          k3s kubectl -n sbay set image deployment/frontend \
+            frontend=ghcr.io/tranbaolam640/sbay-frontend:sha-${{ github.sha }}
+
+          k3s kubectl -n sbay rollout status deployment/frontend \
+            --timeout=180s
+
+      - name: Show deployment status
+        run: |
+          echo "=== Deployments ==="
+          k3s kubectl -n sbay get deployments
+
+          echo ""
+          echo "=== Pods ==="
+          k3s kubectl -n sbay get pods
+
+          echo ""
+          echo "=== Backend image ==="
+          k3s kubectl -n sbay get deployment backend \
+            -o jsonpath='{.spec.template.spec.containers[0].image}'
+          echo ""
+
+          echo ""
+          echo "=== Frontend image ==="
+          k3s kubectl -n sbay get deployment frontend \
+            -o jsonpath='{.spec.template.spec.containers[0].image}'
+          echo ""

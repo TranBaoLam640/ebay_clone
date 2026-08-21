@@ -18,13 +18,14 @@ export const findExisting = ({ buyerId, sellerId, productId, orderId, type }) =>
     ...(type === 'POST_PURCHASE' ? { orderId } : {}),
   }).lean();
 
-export const findCanonical = ({ buyerId, sellerId, productId }) =>
+export const findCanonical = ({ buyerId, sellerId, productId }, session) =>
   Conversation.findOne({
     buyerId,
     sellerId,
     productId,
   })
     .sort({ lastMessageAt: -1, updatedAt: -1, _id: -1 })
+    .session(session || null)
     .lean();
 
 export const attachOrderContext = (conversationId, orderId, session) =>

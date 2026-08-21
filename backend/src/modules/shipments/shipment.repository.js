@@ -25,6 +25,21 @@ export const toPublic = (shipment) => {
   );
 };
 
+export const toBuyerPublic = (shipment) => {
+  const source = shipment?.toObject ? shipment.toObject() : shipment;
+  if (!source) return null;
+  return {
+    _id: source._id,
+    orderId: source.orderId,
+    status: source.status,
+    estimatedDeliveryAt: source.estimatedDeliveryAt,
+    pickedUpAt: source.pickedUpAt ?? null,
+    deliveredAt: source.deliveredAt ?? null,
+    createdAt: source.createdAt,
+    updatedAt: source.updatedAt,
+  };
+};
+
 export const create = async (data, session) =>
   (await Shipment.create([data], { session }))[0];
 

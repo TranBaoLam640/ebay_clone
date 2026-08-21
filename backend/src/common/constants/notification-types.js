@@ -3,6 +3,7 @@ export const NOTIFICATION_TYPES = Object.freeze([
   'ORDER',
   'PAYMENT',
   'RETURN',
+  'DISPUTE',
   'PROMOTION',
   'SYSTEM',
   'AUCTION',

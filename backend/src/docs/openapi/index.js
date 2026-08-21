@@ -20,6 +20,8 @@ import { orderPaths } from './paths/orders.paths.js';
 import { paymentPaths } from './paths/payments.paths.js';
 import { returnPaths } from './paths/returns.paths.js';
 import { shipmentPaths } from './paths/shipments.paths.js';
+import { carrierPaths } from './paths/carriers.paths.js';
+import { inrRequestPaths } from './paths/inr-requests.paths.js';
 import { conversationPaths } from './paths/conversations.paths.js';
 import { offerPaths } from './paths/offers.paths.js';
 
@@ -43,6 +45,8 @@ const pathGroups = [
   paymentPaths,
   returnPaths,
   shipmentPaths,
+  carrierPaths,
+  inrRequestPaths,
   conversationPaths,
   offerPaths,
 ];

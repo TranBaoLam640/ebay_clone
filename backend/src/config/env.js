@@ -71,6 +71,7 @@ const schema = z
     EMAIL_OTP_HMAC_SECRET: optionalString,
     LOG_LEVEL: z.string().default('info'),
     RETURN_WINDOW_DAYS: positiveInteger(30),
+    INR_WINDOW_DAYS: positiveInteger(30),
     SHIPMENT_ETA_DAYS: positiveInteger(3),
     // How often the in-process sweep closes ended auctions. Multi-replica-safe:
     // only one pod's atomic OPEN→CLOSED claim wins per auction.

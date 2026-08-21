@@ -15,3 +15,4 @@ process.env.LOG_LEVEL = 'silent';
 process.env.TRUST_PROXY = '0';
 process.env.COOKIE_SECURE = 'false';
 process.env.SHIPMENT_ETA_DAYS = '3';
+process.env.INR_WINDOW_DAYS = '30';

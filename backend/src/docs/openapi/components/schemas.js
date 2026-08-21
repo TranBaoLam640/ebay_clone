@@ -372,7 +372,16 @@ export const schemas = {
       userId: objectId,
       type: {
         type: 'string',
-        enum: ['ACCOUNT', 'ORDER', 'PAYMENT', 'RETURN', 'PROMOTION', 'SYSTEM'],
+        enum: [
+          'ACCOUNT',
+          'ORDER',
+          'PAYMENT',
+          'RETURN',
+          'DISPUTE',
+          'PROMOTION',
+          'SYSTEM',
+          'AUCTION',
+        ],
       },
       title: { type: 'string' },
       message: { type: 'string' },
@@ -1644,5 +1653,114 @@ export const schemas = {
       createdAt: timestamp,
       updatedAt: timestamp,
     },
+  },
+  Carrier: {
+    type: 'object',
+    required: ['id', 'code', 'name'],
+    properties: {
+      id: objectId,
+      code: { type: 'string', example: 'DHL' },
+      name: { type: 'string', example: 'DHL' },
+    },
+  },
+  CreateINRRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'orderId',
+      'orderItemId',
+      'quantityMissing',
+      'requestedResolution',
+    ],
+    properties: {
+      orderId: objectId,
+      orderItemId: objectId,
+      quantityMissing: { type: 'integer', minimum: 1, example: 1 },
+      requestedResolution: {
+        type: 'string',
+        enum: ['REFUND', 'WANT_ITEM'],
+        example: 'REFUND',
+      },
+      details: { type: 'string', maxLength: 1000 },
+    },
+  },
+  INRTrackingEvidenceRequest: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['carrierId', 'trackingId'],
+    properties: {
+      carrierId: objectId,
+      trackingId: { type: 'string', minLength: 1, maxLength: 120 },
+    },
+  },
+  INRTrackingEvidence: {
+    type: 'object',
+    properties: {
+      carrierId: objectId,
+      carrierCode: { type: 'string' },
+      carrierName: { type: 'string' },
+      trackingId: { type: 'string' },
+      submittedBy: objectId,
+      submittedAt: timestamp,
+    },
+  },
+  INRBuyerRequest: {
+    type: 'object',
+    properties: {
+      id: objectId,
+      type: { type: 'string', enum: ['ITEM_NOT_RECEIVED'] },
+      orderId: objectId,
+      orderItemId: objectId,
+      quantityMissing: { type: 'integer', minimum: 1 },
+      requestedResolution: { type: 'string', enum: ['REFUND', 'WANT_ITEM'] },
+      details: { type: 'string', nullable: true },
+      status: { type: 'string', enum: ['OPEN', 'CLOSED'] },
+      requestAmount: { type: 'integer', minimum: 0 },
+      currency: { type: 'string', enum: ['VND'] },
+      conversationId: objectId,
+      shipment: {
+        type: 'object',
+        nullable: true,
+        description:
+          'Buyer-safe shipment context. Carrier and tracking number are intentionally omitted.',
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      closedAt: nullableTimestamp,
+      closeReason: { type: 'string', nullable: true, enum: ['ITEM_ARRIVED'] },
+    },
+  },
+  INRSellerRequest: {
+    allOf: [
+      { $ref: '#/components/schemas/INRBuyerRequest' },
+      {
+        type: 'object',
+        properties: {
+          buyer: {
+            type: 'object',
+            nullable: true,
+            properties: {
+              id: objectId,
+              displayName: { type: 'string' },
+              avatarUrl: { type: 'string', nullable: true },
+            },
+          },
+          shipment: {
+            type: 'object',
+            nullable: true,
+            description:
+              'Seller shipment context includes canonical carrier and tracking number.',
+          },
+          latestTrackingEvidence: {
+            $ref: '#/components/schemas/INRTrackingEvidence',
+            nullable: true,
+          },
+          trackingEvidenceHistory: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/INRTrackingEvidence' },
+          },
+        },
+      },
+    ],
   },
 };

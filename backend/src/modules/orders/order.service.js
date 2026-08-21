@@ -79,7 +79,7 @@ const attachShipments = async (orders) => {
   const shipmentByOrderId = new Map(
     shipments.map((shipment) => [
       String(shipment.orderId),
-      shipmentRepository.toPublic(shipment),
+      shipmentRepository.toBuyerPublic(shipment),
     ]),
   );
   return orders.map((order) => ({

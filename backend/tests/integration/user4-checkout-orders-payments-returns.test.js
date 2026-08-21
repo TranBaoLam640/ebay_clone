@@ -853,29 +853,34 @@ describe('User 4 checkout, payment, orders, and returns', () => {
   });
 
   it('exposes buyer order shipment visibility and legacy shipment nulls', async () => {
-    const { agent, order, shipment } =
-      await createConfirmedShipment('buyer-shipment-read');
-    const detail = await agent
-      .get(`${prefix}/orders/${order._id}`)
-      .expect(200);
+    const { agent, order, shipment } = await createConfirmedShipment(
+      'buyer-shipment-read',
+    );
+    const detail = await agent.get(`${prefix}/orders/${order._id}`).expect(200);
     expect(detail.body.data.shipment).toEqual(
       expect.objectContaining({
         _id: String(shipment._id),
         orderId: String(order._id),
-        buyerId: String(ids.buyer),
-        sellerId: String(ids.seller),
         status: 'READY_FOR_PICKUP',
+        estimatedDeliveryAt: expect.any(String),
+        pickedUpAt: null,
+        deliveredAt: null,
       }),
     );
+    expect(detail.body.data.shipment).not.toHaveProperty('buyerId');
+    expect(detail.body.data.shipment).not.toHaveProperty('sellerId');
+    expect(detail.body.data.shipment).not.toHaveProperty('carrier');
+    expect(detail.body.data.shipment).not.toHaveProperty('trackingNumber');
     const list = await agent.get(`${prefix}/orders`).expect(200);
-    expect(list.body.data.find((item) => item._id === String(order._id))).toEqual(
+    const listed = list.body.data.find(
+      (item) => item._id === String(order._id),
+    );
+    expect(listed).toEqual(
       expect.objectContaining({
-        shipment: expect.objectContaining({
-          _id: String(shipment._id),
-          trackingNumber: shipment.trackingNumber,
-        }),
+        shipment: expect.objectContaining({ _id: String(shipment._id) }),
       }),
     );
+    expect(listed.shipment).not.toHaveProperty('trackingNumber');
     const legacy = await agent
       .get(`${prefix}/orders/${ids.deliveredOrder}`)
       .expect(200);

@@ -14,6 +14,7 @@ import { Coupon } from '../modules/coupons/coupon.model.js';
 import { CheckoutGroup } from '../modules/checkout-groups/checkout-group.model.js';
 import { Payment } from '../modules/payments/payment.model.js';
 import { ReturnRequest } from '../modules/returns/return-request.model.js';
+import { seedCarriers } from '../modules/carriers/carrier.seed.js';
 
 const FIXTURE_NOW = new Date('2030-01-15T12:00:00.000Z');
 const FIXTURE_START = new Date('2020-01-01T00:00:00.000Z');
@@ -451,7 +452,8 @@ const demoId = (n) =>
   new mongoose.Types.ObjectId(
     `6a00000000000000000000${String(n).padStart(2, '0')}`,
   );
-const demoUuid = (n) => `00000000-0000-4000-8000-0000000a00${String(n).padStart(2, '0')}`;
+const demoUuid = (n) =>
+  `00000000-0000-4000-8000-0000000a00${String(n).padStart(2, '0')}`;
 // Rotating pool of real Unsplash photo ids (all resolve) for visual variety.
 const demoPhotos = [
   'photo-1516035069371-29a1b244cc32',
@@ -640,10 +642,42 @@ const buildAuctionAndOfferProducts = (now) => {
 
   // Extra reserve auctions to exercise the Reserve met / not-met badge.
   const reserveSpecs = [
-    { name: 'Vintage Watch', start: 3_000_000, reserve: 10_000_000, ends: inDays(3), label: '~3 ngày nữa', cat: ids.electronics, seller: ids.sellerOne },
-    { name: 'Bookshelf Speakers', start: 4_000_000, reserve: 9_000_000, ends: inDays(5), label: '~5 ngày nữa', cat: ids.electronics, seller: ids.sellerOne },
-    { name: 'Designer Handbag', start: 1_000_000, reserve: 3_000_000, ends: inHours(12), label: '~12 giờ nữa', cat: ids.fashion, seller: ids.sellerTwo },
-    { name: 'Denim Jacket', start: 400_000, reserve: 900_000, ends: inHours(6), label: '~6 giờ nữa', cat: ids.fashion, seller: ids.sellerTwo },
+    {
+      name: 'Vintage Watch',
+      start: 3_000_000,
+      reserve: 10_000_000,
+      ends: inDays(3),
+      label: '~3 ngày nữa',
+      cat: ids.electronics,
+      seller: ids.sellerOne,
+    },
+    {
+      name: 'Bookshelf Speakers',
+      start: 4_000_000,
+      reserve: 9_000_000,
+      ends: inDays(5),
+      label: '~5 ngày nữa',
+      cat: ids.electronics,
+      seller: ids.sellerOne,
+    },
+    {
+      name: 'Designer Handbag',
+      start: 1_000_000,
+      reserve: 3_000_000,
+      ends: inHours(12),
+      label: '~12 giờ nữa',
+      cat: ids.fashion,
+      seller: ids.sellerTwo,
+    },
+    {
+      name: 'Denim Jacket',
+      start: 400_000,
+      reserve: 900_000,
+      ends: inHours(6),
+      label: '~6 giờ nữa',
+      cat: ids.fashion,
+      seller: ids.sellerTwo,
+    },
   ];
   const reserveAuctions = reserveSpecs.map((spec, i) => {
     const n = 20 + i + 1; // 21..24
@@ -690,10 +724,38 @@ const buildAuctionAndOfferProducts = (now) => {
     }),
   ];
   const extraOfferSpecs = [
-    { name: 'Sport Bluetooth Earbuds', price: 1_790_000, accept: 1_400_000, cat: ids.electronics, seller: ids.sellerOne, photo: 'photo-1606220945770-b5b6c2c55bf1' },
-    { name: 'Cat-Eye Sunglasses', price: 590_000, accept: 450_000, cat: ids.fashion, seller: ids.sellerTwo, photo: 'photo-1511499767150-a48a237f0083' },
-    { name: 'Classic High Heel Pumps', price: 1_690_000, accept: 1_300_000, cat: ids.fashion, seller: ids.sellerTwo, photo: 'photo-1543163521-1bf539c55dd2' },
-    { name: 'Everyday Canvas Tote', price: 299_000, accept: 220_000, cat: ids.fashion, seller: ids.sellerTwo, photo: 'photo-1594223274512-ad4803739b7c' },
+    {
+      name: 'Sport Bluetooth Earbuds',
+      price: 1_790_000,
+      accept: 1_400_000,
+      cat: ids.electronics,
+      seller: ids.sellerOne,
+      photo: 'photo-1606220945770-b5b6c2c55bf1',
+    },
+    {
+      name: 'Cat-Eye Sunglasses',
+      price: 590_000,
+      accept: 450_000,
+      cat: ids.fashion,
+      seller: ids.sellerTwo,
+      photo: 'photo-1511499767150-a48a237f0083',
+    },
+    {
+      name: 'Classic High Heel Pumps',
+      price: 1_690_000,
+      accept: 1_300_000,
+      cat: ids.fashion,
+      seller: ids.sellerTwo,
+      photo: 'photo-1543163521-1bf539c55dd2',
+    },
+    {
+      name: 'Everyday Canvas Tote',
+      price: 299_000,
+      accept: 220_000,
+      cat: ids.fashion,
+      seller: ids.sellerTwo,
+      photo: 'photo-1594223274512-ad4803739b7c',
+    },
   ];
   const extraOffers = extraOfferSpecs.map((spec, i) => {
     const n = 40 + i + 1; // 41..44
@@ -768,6 +830,7 @@ const productReviewFixtures = reviewGroups.flatMap((group, groupIndex) =>
 
 const seed = async () => {
   await connectDatabase();
+  await seedCarriers();
   const passwordHash = await hashPassword('BuyerDemo123!');
   const userIds = [ids.sellerUserOne, ids.sellerUserTwo, ids.buyerUser];
   const sellerIds = [ids.sellerOne, ids.sellerTwo];

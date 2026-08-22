@@ -23,4 +23,11 @@ export const REPLACEMENT_TERMINAL_STATUSES = Object.freeze([
 
 export const REPLACEMENT_INITIATOR_ROLES = Object.freeze(['BUYER', 'SELLER']);
 
+export const REPLACEMENT_INVENTORY_CLAIM_STATUSES = Object.freeze([
+  'UNCLAIMED',
+  'CLAIMED',
+  'RELEASED',
+  'CONSUMED',
+]);
+
 export const REPLACEMENT_ACTIVE_KEY = 'ACTIVE';

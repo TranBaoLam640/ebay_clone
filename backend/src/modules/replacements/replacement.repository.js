@@ -21,6 +21,9 @@ const publicProjection = {
   cancelledAt: 1,
   completedAt: 1,
   failedAt: 1,
+  inventoryClaimStatus: 1,
+  inventoryClaimedAt: 1,
+  inventoryReleasedAt: 1,
   decline: 1,
   cancellation: 1,
   failure: 1,
@@ -44,9 +47,9 @@ export const listByInrRequest = (inrRequestId, session) =>
     .session(session || null)
     .lean();
 
-export const transition = (id, fromStatuses, update, session) =>
+export const transition = (id, fromStatuses, update, session, filter = {}) =>
   Replacement.findOneAndUpdate(
-    { _id: id, status: { $in: fromStatuses } },
+    { _id: id, status: { $in: fromStatuses }, ...filter },
     update,
     {
       session,

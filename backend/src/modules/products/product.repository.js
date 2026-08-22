@@ -313,6 +313,21 @@ export const deductStock = (productId, quantity, session) =>
     ],
     { session, returnDocument: 'after', updatePipeline: true },
   ).lean();
+export const deductStockForSeller = (productId, sellerId, quantity, session) =>
+  Product.findOneAndUpdate(
+    { _id: productId, sellerId, status: 'ACTIVE', stock: { $gte: quantity } },
+    [
+      { $set: { stock: { $subtract: ['$stock', quantity] } } },
+      {
+        $set: {
+          status: {
+            $cond: [{ $eq: ['$stock', 0] }, 'OUT_OF_STOCK', '$status'],
+          },
+        },
+      },
+    ],
+    { session, returnDocument: 'after', updatePipeline: true },
+  ).lean();
 export const restoreStock = (productId, quantity, session) =>
   Product.updateOne(
     { _id: productId, status: { $in: ['ACTIVE', 'OUT_OF_STOCK'] } },

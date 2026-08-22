@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import {
   REPLACEMENT_ACTIVE_KEY,
   REPLACEMENT_ACTIVE_STATUSES,
+  REPLACEMENT_INVENTORY_CLAIM_STATUSES,
   REPLACEMENT_INITIATOR_ROLES,
   REPLACEMENT_STATUSES,
 } from './replacement.constants.js';
@@ -86,6 +87,14 @@ const schema = new mongoose.Schema(
     cancelledAt: Date,
     completedAt: Date,
     failedAt: Date,
+    inventoryClaimStatus: {
+      type: String,
+      enum: REPLACEMENT_INVENTORY_CLAIM_STATUSES,
+      required: true,
+      default: 'UNCLAIMED',
+    },
+    inventoryClaimedAt: Date,
+    inventoryReleasedAt: Date,
     decline: terminalDetails,
     cancellation: terminalDetails,
     failure: terminalDetails,
@@ -109,6 +118,60 @@ schema.pre('validate', function () {
   const isActive = REPLACEMENT_ACTIVE_STATUSES.includes(this.status);
   if (isActive) this.activeKey = REPLACEMENT_ACTIVE_KEY;
   else this.activeKey = undefined;
+
+  if (
+    ['PROPOSED', 'DECLINED'].includes(this.status) &&
+    this.inventoryClaimStatus !== 'UNCLAIMED'
+  )
+    this.invalidate(
+      'inventoryClaimStatus',
+      'Unaccepted replacements cannot have claimed inventory',
+    );
+  if (this.status === 'ACCEPTED') {
+    if (this.inventoryClaimStatus !== 'CLAIMED')
+      this.invalidate(
+        'inventoryClaimStatus',
+        'Accepted replacements require claimed inventory',
+      );
+    if (!this.inventoryClaimedAt)
+      this.invalidate(
+        'inventoryClaimedAt',
+        'Claimed inventory requires inventoryClaimedAt',
+      );
+    if (this.inventoryReleasedAt)
+      this.invalidate(
+        'inventoryReleasedAt',
+        'Claimed inventory cannot be released',
+      );
+  }
+  if (this.status === 'CANCELLED') {
+    if (!['UNCLAIMED', 'RELEASED'].includes(this.inventoryClaimStatus))
+      this.invalidate(
+        'inventoryClaimStatus',
+        'Cancelled replacements must have unclaimed or released inventory',
+      );
+    if (
+      this.inventoryClaimStatus === 'RELEASED' &&
+      (!this.inventoryClaimedAt || !this.inventoryReleasedAt)
+    )
+      this.invalidate(
+        'inventoryReleasedAt',
+        'Released inventory requires claim and release timestamps',
+      );
+    if (this.inventoryClaimStatus === 'UNCLAIMED' && this.inventoryReleasedAt)
+      this.invalidate(
+        'inventoryReleasedAt',
+        'Unclaimed inventory cannot have inventoryReleasedAt',
+      );
+  }
+  if (
+    this.inventoryClaimStatus === 'UNCLAIMED' &&
+    (this.inventoryClaimedAt || this.inventoryReleasedAt)
+  )
+    this.invalidate(
+      'inventoryClaimStatus',
+      'Unclaimed inventory cannot have inventory timestamps',
+    );
 
   if (this.status === 'ACCEPTED' && !this.acceptedAt)
     this.invalidate('acceptedAt', 'Accepted replacements require acceptedAt');

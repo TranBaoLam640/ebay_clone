@@ -3,6 +3,7 @@ import { AppError } from '../../common/errors/app-error.js';
 import * as checkoutRepository from '../checkout/checkout.repository.js';
 import * as inrRepository from '../inr-requests/inr-request.repository.js';
 import * as orderRepository from '../orders/order.repository.js';
+import * as productRepository from '../products/product.repository.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
 import {
   REPLACEMENT_ACTIVE_KEY,
@@ -16,6 +17,12 @@ const forbidden = (message) =>
   new AppError(403, ERROR_CODES.FORBIDDEN, message);
 const invalidState = (message) =>
   new AppError(409, ERROR_CODES.CONFLICT, message);
+const insufficientStock = () =>
+  new AppError(
+    409,
+    ERROR_CODES.INSUFFICIENT_STOCK,
+    'Replacement inventory is unavailable',
+  );
 
 const roleFor = async (userId, request, session) => {
   if (String(request.buyerId) === String(userId)) return 'BUYER';
@@ -87,6 +94,9 @@ const view = (replacement) => ({
   cancelledAt: replacement.cancelledAt ?? null,
   completedAt: replacement.completedAt ?? null,
   failedAt: replacement.failedAt ?? null,
+  inventoryClaimStatus: replacement.inventoryClaimStatus ?? 'UNCLAIMED',
+  inventoryClaimedAt: replacement.inventoryClaimedAt ?? null,
+  inventoryReleasedAt: replacement.inventoryReleasedAt ?? null,
   decline: replacement.decline ?? null,
   cancellation: replacement.cancellation ?? null,
   failure: replacement.failure ?? null,
@@ -135,8 +145,15 @@ const transitionOrThrow = async ({
   update,
   session,
   staleMessage,
+  filter,
 }) => {
-  const changed = await repository.transition(id, from, update, session);
+  const changed = await repository.transition(
+    id,
+    from,
+    update,
+    session,
+    filter,
+  );
   if (changed) return changed;
   const current = await repository.findById(id, session);
   if (!current) throw notFound();
@@ -165,6 +182,7 @@ export const propose = (userId, input) =>
           initiatorRole,
           initiatedBy: userId,
           status: 'PROPOSED',
+          inventoryClaimStatus: 'UNCLAIMED',
           activeKey: REPLACEMENT_ACTIVE_KEY,
         },
         session,
@@ -181,14 +199,24 @@ export const accept = (userId, id, { now = new Date() } = {}) =>
   checkoutRepository.transaction(async (session) => {
     const { replacement, role } = await loadActionContext(userId, id, session);
     assertCounterparty(replacement, role, 'accept');
+    const claimed = await productRepository.deductStockForSeller(
+      replacement.productId,
+      replacement.sellerId,
+      replacement.quantity,
+      session,
+    );
+    if (!claimed) throw insufficientStock();
     const accepted = await transitionOrThrow({
       id,
       from: ['PROPOSED'],
+      filter: { inventoryClaimStatus: 'UNCLAIMED' },
       update: {
         $set: {
           status: 'ACCEPTED',
           acceptedBy: userId,
           acceptedAt: now,
+          inventoryClaimStatus: 'CLAIMED',
+          inventoryClaimedAt: now,
           activeKey: REPLACEMENT_ACTIVE_KEY,
         },
       },
@@ -205,6 +233,7 @@ export const decline = (userId, id, input = {}, { now = new Date() } = {}) =>
     const declined = await transitionOrThrow({
       id,
       from: ['PROPOSED'],
+      filter: { inventoryClaimStatus: 'UNCLAIMED' },
       update: {
         $set: {
           status: 'DECLINED',
@@ -231,14 +260,32 @@ export const cancel = (userId, id, input = {}, { now = new Date() } = {}) =>
   checkoutRepository.transaction(async (session) => {
     const { replacement, role } = await loadActionContext(userId, id, session);
     assertCancellationAllowed(replacement, userId, role);
+    if (replacement.status === 'ACCEPTED') {
+      const restored = await productRepository.restoreStock(
+        replacement.productId,
+        replacement.quantity,
+        session,
+      );
+      if (!restored?.matchedCount)
+        throw invalidState('Replacement inventory could not be released');
+    }
     const cancelled = await transitionOrThrow({
       id,
-      from: ['PROPOSED', 'ACCEPTED'],
+      from: [replacement.status],
+      filter:
+        replacement.status === 'ACCEPTED'
+          ? { inventoryClaimStatus: 'CLAIMED' }
+          : { inventoryClaimStatus: 'UNCLAIMED' },
       update: {
         $set: {
           status: 'CANCELLED',
           cancelledBy: userId,
           cancelledAt: now,
+          inventoryClaimStatus:
+            replacement.status === 'ACCEPTED' ? 'RELEASED' : 'UNCLAIMED',
+          ...(replacement.status === 'ACCEPTED' && {
+            inventoryReleasedAt: now,
+          }),
           ...(input.reason || input.note
             ? {
                 cancellation: {

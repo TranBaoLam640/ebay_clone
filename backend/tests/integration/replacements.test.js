@@ -1,4 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
@@ -6,6 +15,8 @@ let database;
 let mongo;
 let models;
 let service;
+let productRepository;
+let replacementRepository;
 let ids;
 
 const objectId = () => new mongoose.Types.ObjectId();
@@ -210,6 +221,9 @@ const expectStatus = async (promise, status) => {
   await expect(promise).rejects.toMatchObject({ status });
 };
 
+const productStock = async () =>
+  (await models.Product.findById(ids.product).select('stock').lean()).stock;
+
 beforeAll(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
@@ -224,6 +238,8 @@ beforeAll(async () => {
     import('../../src/modules/inr-requests/inr-request.model.js'),
     import('../../src/modules/replacements/replacement.model.js'),
     import('../../src/modules/replacements/replacement.service.js'),
+    import('../../src/modules/products/product.repository.js'),
+    import('../../src/modules/replacements/replacement.repository.js'),
   ]);
   models = {
     User: modules[0].User,
@@ -235,7 +251,13 @@ beforeAll(async () => {
     Replacement: modules[6].Replacement,
   };
   service = modules[7];
+  productRepository = modules[8];
+  replacementRepository = modules[9];
   await Promise.all(Object.values(models).map((model) => model.init()));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 beforeEach(async () => {
@@ -338,6 +360,9 @@ describe('replacement domain foundation', () => {
         status: 'ACCEPTED',
         acceptedBy: String(ids.sellerUser),
         acceptedAt: expect.any(Date),
+        inventoryClaimStatus: 'CLAIMED',
+        inventoryClaimedAt: expect.any(Date),
+        inventoryReleasedAt: null,
       }),
     );
     await expectStatus(service.decline(ids.sellerUser, buyerProposal.id), 409);
@@ -351,8 +376,151 @@ describe('replacement domain foundation', () => {
         status: 'ACCEPTED',
         acceptedBy: String(ids.buyer),
         acceptedAt: expect.any(Date),
+        inventoryClaimStatus: 'CLAIMED',
+        inventoryClaimedAt: expect.any(Date),
       }),
     );
+  });
+
+  it('claims inventory on successful acceptance for buyer and seller proposals', async () => {
+    const buyerProposal = await proposeBuyer();
+    const buyerAccepted = await service.accept(
+      ids.sellerUser,
+      buyerProposal.id,
+    );
+    expect(await productStock()).toBe(3);
+    expect(buyerAccepted).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        inventoryClaimStatus: 'CLAIMED',
+        inventoryClaimedAt: expect.any(Date),
+      }),
+    );
+
+    await service.cancel(ids.buyer, buyerProposal.id);
+    expect(await productStock()).toBe(5);
+
+    const sellerProposal = await proposeSeller();
+    const sellerAccepted = await service.accept(ids.buyer, sellerProposal.id);
+    expect(await productStock()).toBe(3);
+    expect(sellerAccepted).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        inventoryClaimStatus: 'CLAIMED',
+        inventoryClaimedAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it('leaves replacement proposed and stock unchanged when acceptance has insufficient stock', async () => {
+    await models.Product.updateOne({ _id: ids.product }, { stock: 1 });
+    const proposal = await proposeBuyer();
+    await expect(
+      service.accept(ids.sellerUser, proposal.id),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'INSUFFICIENT_STOCK',
+    });
+    expect(await productStock()).toBe(1);
+    expect(await service.findById(proposal.id)).toEqual(
+      expect.objectContaining({
+        status: 'PROPOSED',
+        inventoryClaimStatus: 'UNCLAIMED',
+        inventoryClaimedAt: null,
+      }),
+    );
+  });
+
+  it('deducts stock exactly once under concurrent accept attempts', async () => {
+    const proposal = await proposeBuyer();
+    const results = await Promise.allSettled([
+      service.accept(ids.sellerUser, proposal.id),
+      service.accept(ids.sellerUser, proposal.id),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(await productStock()).toBe(3);
+    expect(await service.findById(proposal.id)).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        inventoryClaimStatus: 'CLAIMED',
+      }),
+    );
+  });
+
+  it('competes safely with normal checkout stock deduction for the last units', async () => {
+    await models.Product.updateOne({ _id: ids.product }, { stock: 2 });
+    const proposal = await proposeBuyer();
+    const results = await Promise.allSettled([
+      service.accept(ids.sellerUser, proposal.id),
+      productRepository.deductStock(ids.product, 2),
+    ]);
+    const replacementAccepted = results[0].status === 'fulfilled';
+    const checkoutClaimed =
+      results[1].status === 'fulfilled' && Boolean(results[1].value);
+
+    expect([replacementAccepted, checkoutClaimed].filter(Boolean)).toHaveLength(
+      1,
+    );
+    expect(await productStock()).toBe(0);
+    expect(await service.findById(proposal.id)).toEqual(
+      replacementAccepted
+        ? expect.objectContaining({
+            status: 'ACCEPTED',
+            inventoryClaimStatus: 'CLAIMED',
+          })
+        : expect.objectContaining({
+            status: 'PROPOSED',
+            inventoryClaimStatus: 'UNCLAIMED',
+          }),
+    );
+  });
+
+  it('rolls back stock deduction when replacement transition fails', async () => {
+    const proposal = await proposeBuyer();
+    vi.spyOn(replacementRepository, 'transition').mockRejectedValueOnce(
+      new Error('injected replacement transition failure'),
+    );
+    await expect(service.accept(ids.sellerUser, proposal.id)).rejects.toThrow(
+      'injected replacement transition failure',
+    );
+    expect(await productStock()).toBe(5);
+    expect(await service.findById(proposal.id)).toEqual(
+      expect.objectContaining({
+        status: 'PROPOSED',
+        inventoryClaimStatus: 'UNCLAIMED',
+      }),
+    );
+  });
+
+  it('does not claim stock from a product that no longer belongs to the seller or is inactive', async () => {
+    const wrongSellerProposal = await proposeBuyer();
+    await models.Product.updateOne(
+      { _id: ids.product },
+      { sellerId: ids.seller2 },
+    );
+    await expectStatus(
+      service.accept(ids.sellerUser, wrongSellerProposal.id),
+      409,
+    );
+    expect(await service.findById(wrongSellerProposal.id)).toEqual(
+      expect.objectContaining({
+        status: 'PROPOSED',
+        inventoryClaimStatus: 'UNCLAIMED',
+      }),
+    );
+
+    await models.Product.updateOne(
+      { _id: ids.product },
+      { sellerId: ids.seller, status: 'HIDDEN' },
+    );
+    await expectStatus(
+      service.accept(ids.sellerUser, wrongSellerProposal.id),
+      409,
+    );
+    expect(await productStock()).toBe(5);
   });
 
   it('declines only by the counterparty from PROPOSED', async () => {
@@ -382,11 +550,15 @@ describe('replacement domain foundation', () => {
     const buyerCancelled = await service.cancel(ids.buyer, buyerProposal.id, {
       reason: 'WITHDRAWN',
     });
+    expect(await productStock()).toBe(5);
     expect(buyerCancelled).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
         cancelledBy: String(ids.buyer),
         cancelledAt: expect.any(Date),
+        inventoryClaimStatus: 'UNCLAIMED',
+        inventoryClaimedAt: null,
+        inventoryReleasedAt: null,
         cancellation: { reason: 'WITHDRAWN' },
       }),
     );
@@ -399,11 +571,15 @@ describe('replacement domain foundation', () => {
       sellerProposal.id,
       { reason: 'WITHDRAWN' },
     );
+    expect(await productStock()).toBe(5);
     expect(sellerCancelled).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
         cancelledBy: String(ids.sellerUser),
         cancelledAt: expect.any(Date),
+        inventoryClaimStatus: 'UNCLAIMED',
+        inventoryClaimedAt: null,
+        inventoryReleasedAt: null,
         cancellation: { reason: 'WITHDRAWN' },
       }),
     );
@@ -415,19 +591,23 @@ describe('replacement domain foundation', () => {
       ids.sellerUser,
       buyerProposal.id,
     );
+    expect(await productStock()).toBe(5);
     expect(sellerDeclined).toEqual(
       expect.objectContaining({
         status: 'DECLINED',
         declinedBy: String(ids.sellerUser),
+        inventoryClaimStatus: 'UNCLAIMED',
       }),
     );
 
     const sellerProposal = await proposeSeller();
     const buyerDeclined = await service.decline(ids.buyer, sellerProposal.id);
+    expect(await productStock()).toBe(5);
     expect(buyerDeclined).toEqual(
       expect.objectContaining({
         status: 'DECLINED',
         declinedBy: String(ids.buyer),
+        inventoryClaimStatus: 'UNCLAIMED',
       }),
     );
   });
@@ -435,6 +615,7 @@ describe('replacement domain foundation', () => {
   it('allows either legitimate party to cancel ACCEPTED before fulfillment', async () => {
     const sellerProposalBuyerCancels = await proposeSeller();
     await service.accept(ids.buyer, sellerProposalBuyerCancels.id);
+    expect(await productStock()).toBe(3);
     await expectStatus(
       service.cancel(ids.otherBuyer, sellerProposalBuyerCancels.id),
       403,
@@ -444,60 +625,100 @@ describe('replacement domain foundation', () => {
       sellerProposalBuyerCancels.id,
       { note: 'Buyer wants refund path later' },
     );
+    expect(await productStock()).toBe(5);
     expect(buyerCancelledSellerProposal).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
         cancelledBy: String(ids.buyer),
         acceptedAt: expect.any(Date),
         cancelledAt: expect.any(Date),
+        inventoryClaimStatus: 'RELEASED',
+        inventoryClaimedAt: expect.any(Date),
+        inventoryReleasedAt: expect.any(Date),
         cancellation: { note: 'Buyer wants refund path later' },
       }),
     );
 
     const sellerProposalSellerCancels = await proposeSeller();
     await service.accept(ids.buyer, sellerProposalSellerCancels.id);
+    expect(await productStock()).toBe(3);
     const sellerCancelledSellerProposal = await service.cancel(
       ids.sellerUser,
       sellerProposalSellerCancels.id,
       { note: 'Seller cannot fulfill later' },
     );
+    expect(await productStock()).toBe(5);
     expect(sellerCancelledSellerProposal).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
         cancelledBy: String(ids.sellerUser),
         acceptedAt: expect.any(Date),
         cancelledAt: expect.any(Date),
+        inventoryClaimStatus: 'RELEASED',
+        inventoryClaimedAt: expect.any(Date),
+        inventoryReleasedAt: expect.any(Date),
         cancellation: { note: 'Seller cannot fulfill later' },
       }),
     );
 
     const buyerProposalBuyerCancels = await proposeBuyer();
     await service.accept(ids.sellerUser, buyerProposalBuyerCancels.id);
+    expect(await productStock()).toBe(3);
     const buyerCancelledBuyerProposal = await service.cancel(
       ids.buyer,
       buyerProposalBuyerCancels.id,
     );
+    expect(await productStock()).toBe(5);
     expect(buyerCancelledBuyerProposal).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
         cancelledBy: String(ids.buyer),
         acceptedAt: expect.any(Date),
         cancelledAt: expect.any(Date),
+        inventoryClaimStatus: 'RELEASED',
+        inventoryClaimedAt: expect.any(Date),
+        inventoryReleasedAt: expect.any(Date),
       }),
     );
 
     const buyerProposalSellerCancels = await proposeBuyer();
     await service.accept(ids.sellerUser, buyerProposalSellerCancels.id);
+    expect(await productStock()).toBe(3);
     const sellerCancelledBuyerProposal = await service.cancel(
       ids.sellerUser,
       buyerProposalSellerCancels.id,
     );
+    expect(await productStock()).toBe(5);
     expect(sellerCancelledBuyerProposal).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
         cancelledBy: String(ids.sellerUser),
         acceptedAt: expect.any(Date),
         cancelledAt: expect.any(Date),
+        inventoryClaimStatus: 'RELEASED',
+        inventoryClaimedAt: expect.any(Date),
+        inventoryReleasedAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it('restores stock exactly once under concurrent accepted cancellation attempts', async () => {
+    const proposal = await proposeSeller();
+    await service.accept(ids.buyer, proposal.id);
+    expect(await productStock()).toBe(3);
+    const results = await Promise.allSettled([
+      service.cancel(ids.buyer, proposal.id),
+      service.cancel(ids.sellerUser, proposal.id),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(await productStock()).toBe(5);
+    expect(await service.findById(proposal.id)).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        inventoryClaimStatus: 'RELEASED',
       }),
     );
   });

@@ -58,3 +58,24 @@ export const transition = (id, fromStatuses, update, session, filter = {}) =>
       runValidators: true,
     },
   ).lean();
+
+export const markFulfillingFromShipmentPickup = (id, session) =>
+  Replacement.findOneAndUpdate(
+    {
+      _id: id,
+      status: 'ACCEPTED',
+      inventoryClaimStatus: 'CLAIMED',
+    },
+    {
+      $set: {
+        status: 'FULFILLING',
+        inventoryClaimStatus: 'CONSUMED',
+      },
+    },
+    {
+      session,
+      returnDocument: 'after',
+      projection: publicProjection,
+      runValidators: true,
+    },
+  ).lean();

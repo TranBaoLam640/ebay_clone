@@ -6,6 +6,12 @@ import * as orderRepository from '../orders/order.repository.js';
 import * as productRepository from '../products/product.repository.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
 import {
+  estimatedDeliveryAt,
+  generateTrackingNumber,
+} from '../shipments/shipment.service.js';
+import * as shipmentRepository from '../shipments/shipment.repository.js';
+import { SHIPMENT_CARRIERS } from '../shipments/shipment.constants.js';
+import {
   REPLACEMENT_ACTIVE_KEY,
   REPLACEMENT_TERMINAL_STATUSES,
 } from './replacement.constants.js';
@@ -35,6 +41,14 @@ const roleFor = async (userId, request, session) => {
 const duplicateActive = (error) =>
   error?.code === 11000 &&
   (error?.keyPattern?.activeKey || error?.keyValue?.activeKey);
+
+const duplicateReplacementShipment = (error) =>
+  error?.code === 11000 &&
+  (error?.keyPattern?.replacementId || error?.keyValue?.replacementId);
+
+const duplicateTracking = (error) =>
+  error?.code === 11000 &&
+  (error?.keyPattern?.trackingNumber || error?.keyValue?.trackingNumber);
 
 const assertInputMatchesInr = (request, input) => {
   if (input.orderId && String(input.orderId) !== String(request.orderId))
@@ -123,6 +137,15 @@ const assertCancellationAllowed = (replacement, userId, role) => {
     return;
   }
   throw invalidState('Replacement cannot be cancelled');
+};
+
+const assertSellerOwnsReplacement = (replacement, role) => {
+  if (role !== 'SELLER')
+    throw forbidden('Only the owning seller can prepare replacement shipment');
+  if (replacement.status !== 'ACCEPTED')
+    throw invalidState('Replacement shipment requires accepted replacement');
+  if (replacement.inventoryClaimStatus !== 'CLAIMED')
+    throw invalidState('Replacement shipment requires claimed inventory');
 };
 
 const loadActionContext = async (userId, id, session) => {
@@ -261,6 +284,22 @@ export const cancel = (userId, id, input = {}, { now = new Date() } = {}) =>
     const { replacement, role } = await loadActionContext(userId, id, session);
     assertCancellationAllowed(replacement, userId, role);
     if (replacement.status === 'ACCEPTED') {
+      const shipment = await shipmentRepository.findByReplacementId(
+        replacement._id,
+        session,
+      );
+      if (shipment && shipment.status !== 'READY_FOR_PICKUP')
+        throw invalidState('Replacement cannot be cancelled after pickup');
+      if (shipment) {
+        const cancelledShipment =
+          await shipmentRepository.cancelReadyForPickupByReplacementId(
+            replacement._id,
+            now,
+            session,
+          );
+        if (!cancelledShipment)
+          throw invalidState('Replacement shipment cannot be cancelled');
+      }
       const restored = await productRepository.restoreStock(
         replacement.productId,
         replacement.quantity,
@@ -301,6 +340,42 @@ export const cancel = (userId, id, input = {}, { now = new Date() } = {}) =>
       staleMessage: 'Replacement cannot be cancelled',
     });
     return view(cancelled);
+  });
+
+export const prepareShipment = (userId, id, { now = new Date() } = {}) =>
+  checkoutRepository.transaction(async (session) => {
+    const { replacement, role } = await loadActionContext(userId, id, session);
+    assertSellerOwnsReplacement(replacement, role);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const shipment = await shipmentRepository.create(
+          {
+            orderId: replacement.orderId,
+            replacementId: replacement._id,
+            buyerId: replacement.buyerId,
+            sellerId: replacement.sellerId,
+            purpose: 'REPLACEMENT',
+            shipperId: null,
+            carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
+            trackingNumber: generateTrackingNumber(),
+            status: 'READY_FOR_PICKUP',
+            estimatedDeliveryAt: estimatedDeliveryAt(now),
+          },
+          session,
+        );
+        return {
+          replacement: view(replacement),
+          shipment: shipmentRepository.toPublic(shipment),
+        };
+      } catch (error) {
+        if (duplicateReplacementShipment(error))
+          throw invalidState('Replacement shipment already exists');
+        if (duplicateTracking(error) && attempt < 2) continue;
+        throw error;
+      }
+    }
+    throw new Error('Shipment tracking number generation failed');
   });
 
 export const findById = async (id, session) => {

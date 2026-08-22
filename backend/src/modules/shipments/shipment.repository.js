@@ -20,6 +20,7 @@ const internalProjection = {
   ...publicProjection,
   purpose: 1,
   replacementId: 1,
+  cancelledAt: 1,
 };
 
 const originalPurposeFilter = {
@@ -164,4 +165,15 @@ export const markDelivered = (id, shipperId, deliveredAt, session) =>
     { _id: id, status: 'IN_TRANSIT', shipperId },
     { status: 'DELIVERED', deliveredAt },
     { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
+
+export const cancelReadyForPickupByReplacementId = (
+  replacementId,
+  cancelledAt,
+  session,
+) =>
+  Shipment.findOneAndUpdate(
+    { replacementId, purpose: 'REPLACEMENT', status: 'READY_FOR_PICKUP' },
+    { status: 'CANCELLED', cancelledAt },
+    { session, returnDocument: 'after', projection: internalProjection },
   ).lean();

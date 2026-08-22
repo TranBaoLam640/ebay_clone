@@ -634,11 +634,13 @@ describe('shipping backend foundation', () => {
       'READY_FOR_PICKUP',
       'IN_TRANSIT',
       'DELIVERED',
+      'CANCELLED',
     ]);
     expect(SHIPMENT_TRANSITIONS).toEqual({
-      READY_FOR_PICKUP: ['IN_TRANSIT'],
+      READY_FOR_PICKUP: ['IN_TRANSIT', 'CANCELLED'],
       IN_TRANSIT: ['DELIVERED'],
       DELIVERED: [],
+      CANCELLED: [],
     });
   });
 });

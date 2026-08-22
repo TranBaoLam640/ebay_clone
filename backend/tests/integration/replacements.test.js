@@ -15,6 +15,7 @@ let database;
 let mongo;
 let models;
 let service;
+let shipmentService;
 let productRepository;
 let replacementRepository;
 let ids;
@@ -224,6 +225,17 @@ const expectStatus = async (promise, status) => {
 const productStock = async () =>
   (await models.Product.findById(ids.product).select('stock').lean()).stock;
 
+const acceptedReplacement = async () => {
+  const proposal = await proposeBuyer();
+  return service.accept(ids.sellerUser, proposal.id);
+};
+
+const replacementShipment = async (replacementId) =>
+  models.Shipment.findOne({
+    replacementId,
+    purpose: 'REPLACEMENT',
+  }).lean();
+
 beforeAll(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
@@ -237,7 +249,9 @@ beforeAll(async () => {
     import('../../src/modules/orders/order.model.js'),
     import('../../src/modules/inr-requests/inr-request.model.js'),
     import('../../src/modules/replacements/replacement.model.js'),
+    import('../../src/modules/shipments/shipment.model.js'),
     import('../../src/modules/replacements/replacement.service.js'),
+    import('../../src/modules/shipments/shipment.service.js'),
     import('../../src/modules/products/product.repository.js'),
     import('../../src/modules/replacements/replacement.repository.js'),
   ]);
@@ -249,10 +263,12 @@ beforeAll(async () => {
     Order: modules[4].Order,
     INRRequest: modules[5].INRRequest,
     Replacement: modules[6].Replacement,
+    Shipment: modules[7].Shipment,
   };
-  service = modules[7];
-  productRepository = modules[8];
-  replacementRepository = modules[9];
+  service = modules[8];
+  shipmentService = modules[9];
+  productRepository = modules[10];
+  replacementRepository = modules[11];
   await Promise.all(Object.values(models).map((model) => model.init()));
 });
 
@@ -721,6 +737,318 @@ describe('replacement domain foundation', () => {
         inventoryClaimStatus: 'RELEASED',
       }),
     );
+  });
+
+  it('lets the owning seller prepare a replacement shipment without consuming inventory', async () => {
+    const accepted = await acceptedReplacement();
+    expect(await productStock()).toBe(3);
+
+    const prepared = await service.prepareShipment(
+      ids.sellerUser,
+      accepted.id,
+      { now: new Date('2026-08-22T00:00:00.000Z') },
+    );
+    const storedShipment = await replacementShipment(accepted.id);
+    const storedReplacement = await models.Replacement.findById(
+      accepted.id,
+    ).lean();
+
+    expect(prepared.replacement).toEqual(
+      expect.objectContaining({
+        id: accepted.id,
+        status: 'ACCEPTED',
+        inventoryClaimStatus: 'CLAIMED',
+      }),
+    );
+    expect(prepared.shipment).not.toHaveProperty('purpose');
+    expect(storedShipment).toEqual(
+      expect.objectContaining({
+        orderId: ids.order,
+        replacementId: storedReplacement._id,
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        purpose: 'REPLACEMENT',
+        status: 'READY_FOR_PICKUP',
+      }),
+    );
+    expect(storedShipment.trackingNumber).toMatch(/^SBAY-[A-F0-9]{8}$/);
+    expect(storedReplacement.status).toBe('ACCEPTED');
+    expect(storedReplacement.inventoryClaimStatus).toBe('CLAIMED');
+    expect(await productStock()).toBe(3);
+  });
+
+  it('rejects replacement shipment preparation from wrong state, claim, or actor', async () => {
+    const proposed = await proposeBuyer();
+    await expectStatus(
+      service.prepareShipment(ids.sellerUser, proposed.id),
+      409,
+    );
+
+    const accepted = await service.accept(ids.sellerUser, proposed.id);
+    await expectStatus(service.prepareShipment(ids.buyer, accepted.id), 403);
+    await expectStatus(
+      service.prepareShipment(ids.sellerUser2, accepted.id),
+      403,
+    );
+    await expectStatus(
+      service.prepareShipment(ids.otherBuyer, accepted.id),
+      403,
+    );
+
+    for (const status of [
+      'DECLINED',
+      'CANCELLED',
+      'FULFILLING',
+      'COMPLETED',
+      'FAILED',
+    ]) {
+      await models.Replacement.updateOne(
+        { _id: accepted.id },
+        {
+          $set: {
+            status,
+            inventoryClaimStatus:
+              status === 'FULFILLING' ? 'CONSUMED' : 'RELEASED',
+            ...(status === 'DECLINED' && { declinedAt: new Date() }),
+            ...(status === 'CANCELLED' && { cancelledAt: new Date() }),
+            ...(status === 'COMPLETED' && { completedAt: new Date() }),
+            ...(status === 'FAILED' && { failedAt: new Date() }),
+          },
+          $unset: { activeKey: 1 },
+        },
+      );
+      await expectStatus(
+        service.prepareShipment(ids.sellerUser, accepted.id),
+        409,
+      );
+    }
+
+    for (const inventoryClaimStatus of ['UNCLAIMED', 'RELEASED', 'CONSUMED']) {
+      await models.Replacement.updateOne(
+        { _id: accepted.id },
+        {
+          $set: {
+            status: 'ACCEPTED',
+            inventoryClaimStatus,
+            activeKey: 'ACTIVE',
+          },
+        },
+      );
+      await expectStatus(
+        service.prepareShipment(ids.sellerUser, accepted.id),
+        409,
+      );
+    }
+  });
+
+  it('enforces one shipment per replacement under concurrent preparation', async () => {
+    const accepted = await acceptedReplacement();
+    const results = await Promise.allSettled([
+      service.prepareShipment(ids.sellerUser, accepted.id),
+      service.prepareShipment(ids.sellerUser, accepted.id),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(
+      await models.Shipment.countDocuments({
+        replacementId: accepted.id,
+        purpose: 'REPLACEMENT',
+      }),
+    ).toBe(1);
+    expect(await productStock()).toBe(3);
+  });
+
+  it('cancels an accepted replacement with a ready shipment atomically', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+
+    const cancelled = await service.cancel(ids.buyer, accepted.id, {
+      note: 'Switching away before pickup',
+    });
+    const storedShipment = await replacementShipment(accepted.id);
+
+    expect(cancelled).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        inventoryClaimStatus: 'RELEASED',
+        cancellation: { note: 'Switching away before pickup' },
+      }),
+    );
+    expect(storedShipment.status).toBe('CANCELLED');
+    expect(storedShipment.cancelledAt).toBeInstanceOf(Date);
+    expect(await productStock()).toBe(5);
+  });
+
+  it('restores stock once under duplicate prepared replacement cancellation', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+
+    const results = await Promise.allSettled([
+      service.cancel(ids.buyer, accepted.id),
+      service.cancel(ids.sellerUser, accepted.id),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(await productStock()).toBe(5);
+    expect((await replacementShipment(accepted.id)).status).toBe('CANCELLED');
+    expect(await service.findById(accepted.id)).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        inventoryClaimStatus: 'RELEASED',
+      }),
+    );
+  });
+
+  it('moves replacement pickup to fulfilling and consumes claimed inventory without stock changes', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    expect(await productStock()).toBe(3);
+
+    const pickedUp = await shipmentService.pickup(
+      ids.sellerUser2,
+      shipment._id,
+    );
+    const storedReplacement = await models.Replacement.findById(
+      accepted.id,
+    ).lean();
+    const storedShipment = await models.Shipment.findById(shipment._id).lean();
+
+    expect(pickedUp.status).toBe('IN_TRANSIT');
+    expect(storedShipment.status).toBe('IN_TRANSIT');
+    expect(String(storedShipment.shipperId)).toBe(String(ids.sellerUser2));
+    expect(storedReplacement.status).toBe('FULFILLING');
+    expect(storedReplacement.inventoryClaimStatus).toBe('CONSUMED');
+    expect(await productStock()).toBe(3);
+  });
+
+  it('makes duplicate replacement pickup stale-safe without extra stock mutation', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+
+    const results = await Promise.allSettled([
+      shipmentService.pickup(ids.sellerUser2, shipment._id),
+      shipmentService.pickup(ids.sellerUser2, shipment._id),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(await productStock()).toBe(3);
+    expect(await service.findById(accepted.id)).toEqual(
+      expect.objectContaining({
+        status: 'FULFILLING',
+        inventoryClaimStatus: 'CONSUMED',
+      }),
+    );
+  });
+
+  it('serializes cancel vs pickup races into one valid branch', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+
+    const results = await Promise.allSettled([
+      service.cancel(ids.buyer, accepted.id),
+      shipmentService.pickup(ids.sellerUser2, shipment._id),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    const storedReplacement = await models.Replacement.findById(
+      accepted.id,
+    ).lean();
+    const storedShipment = await models.Shipment.findById(shipment._id).lean();
+    const stock = await productStock();
+
+    if (storedReplacement.status === 'CANCELLED') {
+      expect(storedShipment.status).toBe('CANCELLED');
+      expect(storedReplacement.inventoryClaimStatus).toBe('RELEASED');
+      expect(stock).toBe(5);
+    } else {
+      expect(storedReplacement.status).toBe('FULFILLING');
+      expect(storedShipment.status).toBe('IN_TRANSIT');
+      expect(storedReplacement.inventoryClaimStatus).toBe('CONSUMED');
+      expect(stock).toBe(3);
+    }
+  });
+
+  it('rejects cancellation after replacement shipment is in transit', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    await shipmentService.pickup(ids.sellerUser2, shipment._id);
+
+    await expectStatus(service.cancel(ids.buyer, accepted.id), 409);
+
+    expect(await service.findById(accepted.id)).toEqual(
+      expect.objectContaining({
+        status: 'FULFILLING',
+        inventoryClaimStatus: 'CONSUMED',
+      }),
+    );
+    expect((await models.Shipment.findById(shipment._id).lean()).status).toBe(
+      'IN_TRANSIT',
+    );
+    expect(await productStock()).toBe(3);
+  });
+
+  it('delivers replacement shipments without completing the order, INR, or replacement', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    await shipmentService.pickup(ids.sellerUser2, shipment._id);
+
+    const delivered = await shipmentService.deliver(
+      ids.sellerUser2,
+      shipment._id,
+    );
+    const storedReplacement = await models.Replacement.findById(
+      accepted.id,
+    ).lean();
+    const storedInr = await models.INRRequest.findById(ids.inr).lean();
+    const storedOrder = await models.Order.findById(ids.order).lean();
+
+    expect(delivered.status).toBe('DELIVERED');
+    expect(storedReplacement.status).toBe('FULFILLING');
+    expect(storedReplacement.inventoryClaimStatus).toBe('CONSUMED');
+    expect(storedInr.status).toBe('OPEN');
+    expect(storedOrder.orderStatus).toBe('CONFIRMED');
+    expect(await productStock()).toBe(3);
+  });
+
+  it('rejects duplicate replacement delivery without duplicate side effects', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    await shipmentService.pickup(ids.sellerUser2, shipment._id);
+    await shipmentService.deliver(ids.sellerUser2, shipment._id);
+
+    await expectStatus(
+      shipmentService.deliver(ids.sellerUser2, shipment._id),
+      409,
+    );
+
+    expect(await service.findById(accepted.id)).toEqual(
+      expect.objectContaining({
+        status: 'FULFILLING',
+        inventoryClaimStatus: 'CONSUMED',
+      }),
+    );
+    expect((await models.Order.findById(ids.order).lean()).orderStatus).toBe(
+      'CONFIRMED',
+    );
+    expect(await productStock()).toBe(3);
   });
 
   it('protects terminal states from later mutation', async () => {

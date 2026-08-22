@@ -64,6 +64,7 @@ const schema = new mongoose.Schema(
     estimatedDeliveryAt: { type: Date, required: true },
     pickedUpAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
+    cancelledAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

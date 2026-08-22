@@ -144,6 +144,23 @@ schema.pre('validate', function () {
         'Claimed inventory cannot be released',
       );
   }
+  if (this.status === 'FULFILLING') {
+    if (this.inventoryClaimStatus !== 'CONSUMED')
+      this.invalidate(
+        'inventoryClaimStatus',
+        'Fulfilling replacements require consumed inventory',
+      );
+    if (!this.inventoryClaimedAt)
+      this.invalidate(
+        'inventoryClaimedAt',
+        'Consumed inventory requires inventoryClaimedAt',
+      );
+    if (this.inventoryReleasedAt)
+      this.invalidate(
+        'inventoryReleasedAt',
+        'Consumed inventory cannot be released',
+      );
+  }
   if (this.status === 'CANCELLED') {
     if (!['UNCLAIMED', 'RELEASED'].includes(this.inventoryClaimStatus))
       this.invalidate(

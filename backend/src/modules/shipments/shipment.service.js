@@ -7,6 +7,7 @@ import { USER4_NOTIFICATION_EVENTS } from '../../common/constants/user4-notifica
 import * as checkoutRepository from '../checkout/checkout.repository.js';
 import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
+import * as replacementRepository from '../replacements/replacement.repository.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
 import { SHIPMENT_CARRIERS, TRACKING_PREFIX } from './shipment.constants.js';
 import * as repository from './shipment.repository.js';
@@ -148,6 +149,15 @@ export const pickup = (shipperId, shipmentId) =>
         'Your order is now in transit with SBay Express',
         session,
       );
+    if (existing.purpose === 'REPLACEMENT') {
+      const replacement =
+        await replacementRepository.markFulfillingFromShipmentPickup(
+          existing.replacementId,
+          session,
+        );
+      if (!replacement)
+        throw invalidState('Replacement shipment cannot be picked up');
+    }
     return claimed;
   });
 

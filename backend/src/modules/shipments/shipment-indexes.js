@@ -7,6 +7,9 @@ const samePartialFilter = (actual = {}, expected = {}) =>
   JSON.stringify(actual) === JSON.stringify(expected);
 
 const obsoleteOriginalKey = { orderId: 1 };
+const legacyPurposeFilter = {
+  $or: [{ purpose: { $exists: false } }, { purpose: null }],
+};
 
 const targetIndexes = [
   {
@@ -42,24 +45,32 @@ const hasIndex = (indexes, target) =>
       ),
   );
 
+const assertNoDuplicateOriginalCandidates = async (collection) => {
+  const duplicates = await collection
+    .aggregate([
+      { $match: { purpose: 'ORIGINAL' } },
+      { $group: { _id: '$orderId', count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+      { $limit: 5 },
+    ])
+    .toArray();
+
+  if (duplicates.length > 0) {
+    const orderIds = duplicates.map((duplicate) => duplicate._id).join(', ');
+    throw new Error(
+      `Cannot maintain Shipment indexes; duplicate ORIGINAL shipments exist for orderId(s): ${orderIds}`,
+    );
+  }
+};
+
 export const maintainShipmentIndexes = async () => {
   await Shipment.createCollection();
 
   const collection = Shipment.collection;
-  const backfill = await collection.updateMany(
-    { purpose: { $exists: false } },
-    { $set: { purpose: 'ORIGINAL' } },
-  );
-
-  const initialIndexes = await collection.indexes();
-  const dropped = [];
-  const obsolete = initialIndexes.find(
-    (index) => index.unique === true && sameKey(index.key, obsoleteOriginalKey),
-  );
-  if (obsolete) {
-    await collection.dropIndex(obsolete.name);
-    dropped.push(obsolete.name);
-  }
+  const backfill = await collection.updateMany(legacyPurposeFilter, {
+    $set: { purpose: 'ORIGINAL' },
+  });
+  await assertNoDuplicateOriginalCandidates(collection);
 
   let refreshed = await collection.indexes();
   const created = [];
@@ -68,6 +79,15 @@ export const maintainShipmentIndexes = async () => {
     const name = await collection.createIndex(target.key, target.options);
     created.push(name);
     refreshed = await collection.indexes();
+  }
+
+  const dropped = [];
+  const obsolete = refreshed.find(
+    (index) => index.unique === true && sameKey(index.key, obsoleteOriginalKey),
+  );
+  if (obsolete) {
+    await collection.dropIndex(obsolete.name);
+    dropped.push(obsolete.name);
   }
 
   return {

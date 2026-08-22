@@ -476,6 +476,7 @@ describe('shipping backend foundation', () => {
       { unique: true, name: 'orderId_1' },
     );
     const order = orderSnapshot();
+    const nullPurposeOrder = orderSnapshot();
     await Shipment.collection.insertOne({
       orderId: order._id,
       buyerId: order.buyerId,
@@ -487,15 +488,34 @@ describe('shipping backend foundation', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+    await Shipment.collection.insertOne({
+      orderId: nullPurposeOrder._id,
+      buyerId: nullPurposeOrder.buyerId,
+      sellerId: nullPurposeOrder.sellerId,
+      purpose: null,
+      carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
+      trackingNumber: 'SBAY-LEGACY02',
+      status: 'READY_FOR_PICKUP',
+      estimatedDeliveryAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
 
     const first = await maintainShipmentIndexes();
     const second = await maintainShipmentIndexes();
     const indexes = await Shipment.collection.indexes();
 
-    expect(first.backfilled).toBe(1);
+    expect(first.backfilled).toBe(2);
     expect(first.dropped).toContain('orderId_1');
+    expect(first.created).toEqual(
+      expect.arrayContaining([
+        'unique_original_shipment_per_order',
+        'unique_replacement_shipment_per_replacement',
+      ]),
+    );
     expect(second.backfilled).toBe(0);
     expect(second.dropped).toEqual([]);
+    expect(second.created).toEqual([]);
     expect(
       indexes.some(
         (index) =>
@@ -523,6 +543,90 @@ describe('shipping backend foundation', () => {
     expect(
       (await Shipment.findOne({ orderId: order._id }).lean()).purpose,
     ).toBe('ORIGINAL');
+    expect(
+      (await Shipment.findOne({ orderId: nullPurposeOrder._id }).lean())
+        .purpose,
+    ).toBe('ORIGINAL');
+
+    await expect(
+      Shipment.create({
+        orderId: order._id,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        purpose: 'ORIGINAL',
+        carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
+        trackingNumber: 'SBAY-DUPORIG1',
+        status: 'READY_FOR_PICKUP',
+        estimatedDeliveryAt: new Date(),
+      }),
+    ).rejects.toMatchObject({ code: 11000 });
+
+    const replacements = await Promise.all([
+      replacementDocument({
+        orderId: order._id,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+      }),
+      replacementDocument({
+        orderId: order._id,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+      }),
+    ]);
+    await Shipment.create(
+      replacements.map((replacement) => replacementShipmentData(replacement)),
+    );
+    expect(await Shipment.countDocuments({ orderId: order._id })).toBe(3);
+    await expect(
+      Shipment.create(
+        replacementShipmentData(replacements[0], {
+          trackingNumber: 'SBAY-DUPREPL2',
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 11000 });
+  });
+
+  it('refuses shipment index maintenance when duplicate originals already exist', async () => {
+    await Promise.all([
+      dropIndexIfPresent('unique_original_shipment_per_order'),
+      dropIndexIfPresent('unique_replacement_shipment_per_replacement'),
+      dropIndexIfPresent('orderId_1_purpose_1_createdAt_-1'),
+      dropIndexIfPresent('orderId_1'),
+    ]);
+    const order = orderSnapshot();
+    await Shipment.collection.insertMany([
+      {
+        orderId: order._id,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        purpose: 'ORIGINAL',
+        carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
+        trackingNumber: 'SBAY-DUPORIG2',
+        status: 'READY_FOR_PICKUP',
+        estimatedDeliveryAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        orderId: order._id,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        purpose: 'ORIGINAL',
+        carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
+        trackingNumber: 'SBAY-DUPORIG3',
+        status: 'READY_FOR_PICKUP',
+        estimatedDeliveryAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+
+    await expect(maintainShipmentIndexes()).rejects.toThrow(
+      /duplicate ORIGINAL shipments exist/,
+    );
+
+    await Shipment.deleteMany({});
+    await maintainShipmentIndexes();
   });
 
   it('defines only MVP shipment statuses and forward transitions', () => {

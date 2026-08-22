@@ -1121,6 +1121,18 @@ describe('INR requests', () => {
       inventoryClaimedAt: now,
     });
 
+    const closedFulfillingRequest = await makeRequest(closedState);
+    const fulfillingReplacement = await makeReplacement(
+      closedFulfillingRequest,
+      {
+        status: 'FULFILLING',
+        inventoryClaimStatus: 'CONSUMED',
+        acceptedAt: now,
+        acceptedBy: ids.sellerUser,
+        inventoryClaimedAt: now,
+      },
+    );
+
     const completedOpenRequest = await makeRequest();
     const completedReplacement = await makeReplacement(completedOpenRequest, {
       status: 'COMPLETED',
@@ -1161,6 +1173,13 @@ describe('INR requests', () => {
           inrRequestId: String(closedClaimedRequest.id),
           replacementId: String(claimedReplacement._id),
           inventoryClaimStatus: 'CLAIMED',
+        }),
+        expect.objectContaining({
+          type: 'CLOSED_INR_WITH_ACTIVE_REPLACEMENT',
+          inrRequestId: String(closedFulfillingRequest.id),
+          replacementId: String(fulfillingReplacement._id),
+          replacementStatus: 'FULFILLING',
+          inventoryClaimStatus: 'CONSUMED',
         }),
         expect.objectContaining({
           type: 'COMPLETED_REPLACEMENT_WITH_OPEN_INR',

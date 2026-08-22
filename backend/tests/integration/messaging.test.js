@@ -262,6 +262,14 @@ const connectAs = (session) => {
 const waitFor = (socket, event) =>
   new Promise((resolve) => socket.once(event, resolve));
 
+const expectNoEvent = async (socket, event, timeout = 100) => {
+  const received = await Promise.race([
+    waitFor(socket, event).then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeout)),
+  ]);
+  expect(received).toBe(false);
+};
+
 const addCartItem = (session, productId, quantity = 1) =>
   mutate(session.agent, 'post', '/cart/items', {
     productId,
@@ -299,6 +307,27 @@ const createInrRequest = async (conversationId, overrides = {}) =>
     status: 'OPEN',
     ...overrides,
   });
+
+const deliverReplacement = async (replacementId, { delivered = true } = {}) => {
+  const shipperId = new mongoose.Types.ObjectId();
+  await models.User.create({
+    _id: shipperId,
+    email: `${shipperId}@shipper.example.test`,
+    passwordHash,
+    fullName: 'Replacement Shipper',
+    status: 'ACTIVE',
+    role: 'SHIPPER',
+    isEmailVerified: true,
+  });
+  const shipmentService =
+    await import('../../src/modules/shipments/shipment.service.js');
+  const shipment = await models.Shipment.findOne({
+    replacementId,
+    purpose: 'REPLACEMENT',
+  }).lean();
+  await shipmentService.pickup(shipperId, shipment._id);
+  if (delivered) await shipmentService.deliver(shipperId, shipment._id);
+};
 
 const uploadAttachments = async (session, conversationId, files) => {
   const token = await csrf(session.agent);
@@ -1646,6 +1675,118 @@ describe('buyer/seller messaging', () => {
     expect(finalHistory.body.data[0].replacement.availableActions).toEqual([]);
     expect(['ACCEPTED', 'DECLINED']).toContain(
       finalHistory.body.data[0].replacement.status,
+    );
+  });
+
+  it('emits replacement updates after successful confirmation and renders a terminal completed card', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const socket = connectAs(seller);
+    await waitFor(socket, 'connect');
+    await new Promise((resolve) =>
+      socket.emit('conversation:join', conversation.id, resolve),
+    );
+    const inr = await createInrRequest(conversation.id);
+    const proposal = await mutate(
+      seller.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    ).then((response) => response.body.data.replacement);
+    const accepted = await mutate(
+      buyer.agent,
+      'post',
+      `/replacements/${proposal.id}/accept`,
+    ).then((response) => response.body.data);
+    const prepared = await mutate(
+      seller.agent,
+      'post',
+      `/replacements/${accepted.id}/shipment`,
+      {},
+    );
+    expect(prepared.status).toBe(201);
+    await deliverReplacement(accepted.id);
+
+    const update = waitFor(socket, 'replacement:updated');
+    const confirmed = await mutate(
+      buyer.agent,
+      'post',
+      `/replacements/${accepted.id}/confirm-received`,
+      {},
+    );
+    expect(confirmed.status).toBe(200);
+
+    await expect(update).resolves.toEqual({
+      conversationId: conversation.id,
+      replacementId: accepted.id,
+      messageId: expect.any(String),
+    });
+    const history = await buyer.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(history.body.data).toHaveLength(1);
+    expect(history.body.data[0].replacement).toEqual(
+      expect.objectContaining({
+        id: accepted.id,
+        status: 'COMPLETED',
+        displayState: 'COMPLETED',
+        availableActions: [],
+      }),
+    );
+    expect(history.body.data[0].replacement.availableActions).not.toEqual(
+      expect.arrayContaining(['ACCEPT', 'DECLINE', 'REFUND_INSTEAD']),
+    );
+  });
+
+  it('does not emit replacement updates or mutate chat cards for rejected confirmation', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const socket = connectAs(seller);
+    await waitFor(socket, 'connect');
+    await new Promise((resolve) =>
+      socket.emit('conversation:join', conversation.id, resolve),
+    );
+    const inr = await createInrRequest(conversation.id);
+    const proposal = await mutate(
+      seller.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    ).then((response) => response.body.data.replacement);
+    const accepted = await mutate(
+      buyer.agent,
+      'post',
+      `/replacements/${proposal.id}/accept`,
+    ).then((response) => response.body.data);
+    const prepared = await mutate(
+      seller.agent,
+      'post',
+      `/replacements/${accepted.id}/shipment`,
+      {},
+    );
+    expect(prepared.status).toBe(201);
+    await deliverReplacement(accepted.id, { delivered: false });
+
+    const rejected = await mutate(
+      buyer.agent,
+      'post',
+      `/replacements/${accepted.id}/confirm-received`,
+      {},
+    );
+    expect(rejected.status).toBe(409);
+
+    await expectNoEvent(socket, 'replacement:updated');
+    const history = await buyer.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(history.body.data).toHaveLength(1);
+    expect(history.body.data[0].replacement).toEqual(
+      expect.objectContaining({
+        id: accepted.id,
+        status: 'FULFILLING',
+        displayState: 'FULFILLING',
+        availableActions: [],
+      }),
     );
   });
 

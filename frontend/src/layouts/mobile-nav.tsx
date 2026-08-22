@@ -28,9 +28,20 @@ const NAV: { to: string; labelKey: string; icon: IconVariant; end?: boolean }[] 
   { to: `${paths.products}?sort=newest`, labelKey: 'header.navNewest', icon: 'icon-sparkles' },
 ];
 
-const ACCOUNT: { to: string; labelKey: string; icon: IconVariant }[] = [
+const ACCOUNT: {
+  to: string;
+  labelKey: string;
+  fallback?: string;
+  icon: IconVariant;
+}[] = [
   { to: paths.account.profile, labelKey: 'header.profile', icon: 'icon-user' },
   { to: paths.orders, labelKey: 'account.navOrders', icon: 'icon-package' },
+  {
+    to: paths.inrRequests,
+    labelKey: 'account.navBuyerRequests',
+    fallback: 'Requests & Disputes',
+    icon: 'icon-headset',
+  },
   { to: paths.messages, labelKey: 'header.messages', icon: 'icon-mail' },
   { to: paths.account.addresses, labelKey: 'header.addresses', icon: 'icon-map-pin' },
   { to: paths.account.notifications, labelKey: 'header.notifications', icon: 'icon-bell' },
@@ -139,7 +150,13 @@ function MobileNavList({
   onNavigate,
   linkClass,
 }: {
-  items: { to: string; labelKey: string; fallback?: string; icon: IconVariant; end?: boolean }[];
+  items: {
+    to: string;
+    labelKey: string;
+    fallback?: string;
+    icon: IconVariant;
+    end?: boolean;
+  }[];
   onNavigate: () => void;
   linkClass: (s: { isActive: boolean }) => string;
 }) {

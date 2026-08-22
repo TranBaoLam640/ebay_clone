@@ -17,6 +17,7 @@ export const paths = {
   orders: '/account/orders',
   order: (id: string) => `/account/orders/${id}`,
   orderCheckout: (id: string) => `/account/orders/${id}/checkout`,
+  inrRequests: '/account/inr-requests',
   inrRequest: (id: string) => `/account/inr-requests/${id}`,
   account: {
     root: '/account',
@@ -40,4 +41,3 @@ export const paths = {
 
 export const defaultPathForRole = (role?: UserRole | null) =>
   role === 'SHIPPER' ? paths.shipper.shipments : paths.home;
-

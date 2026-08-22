@@ -14,6 +14,11 @@ export function AccountLayout() {
   const NAV: { to: string; label: string; icon: IconVariant; end?: boolean }[] = [
     { to: paths.account.profile, label: t('account.navProfile'), icon: 'icon-user' },
     { to: paths.orders, label: t('account.navOrders'), icon: 'icon-package' },
+    {
+      to: paths.inrRequests,
+      label: t('account.navBuyerRequests', { defaultValue: 'Requests & Disputes' }),
+      icon: 'icon-headset',
+    },
     { to: paths.messages, label: t('account.navMessages'), icon: 'icon-mail' },
     { to: paths.account.bids, label: t('account.navBids'), icon: 'icon-tag' },
     { to: paths.account.offers, label: t('account.navOffers'), icon: 'icon-gift' },
@@ -26,7 +31,7 @@ export function AccountLayout() {
           },
           {
             to: paths.account.requestsDisputes,
-            label: 'Requests & Disputes',
+            label: t('account.navSellerRequests', { defaultValue: 'Seller Requests' }),
             icon: 'icon-headset' as const,
           },
           { to: paths.account.sellerFeedbacks, label: t('account.navSellerFeedbacks'), icon: 'icon-star' as const },

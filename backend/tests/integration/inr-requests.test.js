@@ -424,6 +424,21 @@ describe('INR requests', () => {
     },
   );
 
+  it('allows INR creation one minute after the estimated delivery time', async () => {
+    const agent = await login();
+    await models.Shipment.updateOne(
+      { _id: ids.shipment },
+      { estimatedDeliveryAt: new Date(Date.now() - 30_000) },
+    );
+    await mutate(agent, 'post', '/inr-requests', createBody()).expect(409);
+
+    await models.Shipment.updateOne(
+      { _id: ids.shipment },
+      { estimatedDeliveryAt: new Date(Date.now() - 61_000) },
+    );
+    await mutate(agent, 'post', '/inr-requests', createBody()).expect(201);
+  });
+
   it('rejects before ETA, expired window, missing shipment, wrong item, wrong buyer, and bad quantity', async () => {
     const agent = await login();
     await models.Shipment.updateOne(

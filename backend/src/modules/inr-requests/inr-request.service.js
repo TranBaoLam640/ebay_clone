@@ -23,7 +23,7 @@ import {
 } from './inr-request.constants.js';
 import * as repository from './inr-request.repository.js';
 
-const INR_OPEN_DELAY_MINUTES = 10;
+const INR_OPEN_DELAY_MINUTES = 1;
 const INR_OPEN_DELAY_MS = INR_OPEN_DELAY_MINUTES * 60_000;
 
 const inrError = (status, code, message) => new AppError(status, code, message);

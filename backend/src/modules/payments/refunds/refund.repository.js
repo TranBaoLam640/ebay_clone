@@ -51,6 +51,20 @@ export const findInternalBySource = (sourceType, sourceId, session) =>
     .session(session || null)
     .lean();
 
+export const completedAmountForPayment = async (
+  paymentId,
+  excludeRefundId,
+  session,
+) => {
+  const match = { paymentId, status: 'COMPLETED' };
+  if (excludeRefundId) match._id = { $ne: excludeRefundId };
+  const [result] = await Refund.aggregate([
+    { $match: match },
+    { $group: { _id: '$paymentId', amount: { $sum: '$amount' } } },
+  ]).session(session || null);
+  return result?.amount ?? 0;
+};
+
 export const createProcessing = async (data, claimToken, now) =>
   (
     await Refund.create([

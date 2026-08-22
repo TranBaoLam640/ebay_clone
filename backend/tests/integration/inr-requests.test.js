@@ -257,6 +257,25 @@ const createBody = (overrides = {}) => ({
   ...overrides,
 });
 
+const createOpenInr = async (overrides = {}) => {
+  const buyer = await login();
+  const response = await mutate(
+    buyer,
+    'post',
+    '/inr-requests',
+    createBody(overrides),
+  ).expect(201);
+  return response.body.data;
+};
+
+const refundPath = (requestId) => `/inr-requests/${requestId}/refund`;
+
+const refundNotificationCount = () =>
+  models.Notification.countDocuments({
+    userId: ids.buyer,
+    eventType: USER4_NOTIFICATION_EVENTS.INR_REFUNDED,
+  });
+
 beforeAll(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   process.env.MONGODB_URI = mongo.getUri();
@@ -558,6 +577,9 @@ describe('INR requests', () => {
   });
 
   it('completes a PayPal seller refund exactly once and closes the INR after success', async () => {
+    const provider =
+      await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
+    const refundSpy = vi.spyOn(provider, 'refundOrder');
     const buyer = await login();
     const seller = await login('seller@example.test');
     const created = await mutate(
@@ -638,6 +660,7 @@ describe('INR requests', () => {
     ).expect(200);
     expect(replay.body.data.refund.id).toBe(String(refund._id));
     expect(await models.Refund.countDocuments({ sourceId: requestId })).toBe(1);
+    expect(refundSpy).toHaveBeenCalledOnce();
     expect(
       await models.Notification.countDocuments({
         eventType: USER4_NOTIFICATION_EVENTS.INR_REFUNDED,
@@ -656,7 +679,7 @@ describe('INR requests', () => {
   it('keeps INR open and records failure when the PayPal refund provider fails', async () => {
     const provider =
       await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
-    vi.spyOn(provider, 'refundOrder').mockResolvedValueOnce({
+    const refundSpy = vi.spyOn(provider, 'refundOrder').mockResolvedValueOnce({
       providerOrderId: `SIM-${ids.checkoutGroup}`,
       status: 'FAILED',
       reason: 'DECLINED',
@@ -688,18 +711,46 @@ describe('INR requests', () => {
         eventType: USER4_NOTIFICATION_EVENTS.INR_REFUNDED,
       }),
     ).toBe(0);
-    vi.restoreAllMocks();
-    await mutate(
+    const failedRefund = await models.Refund.findOne({
+      sourceId: requestId,
+    }).lean();
+    const retry = await mutate(
       seller,
       'post',
       `/inr-requests/${requestId}/refund`,
       {},
       'refund-retry',
     ).expect(200);
+    expect(retry.body.data).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'SELLER_REFUNDED',
+        refundId: String(failedRefund._id),
+        refund: expect.objectContaining({
+          id: String(failedRefund._id),
+          status: 'COMPLETED',
+        }),
+      }),
+    );
+    const completedRefund = await models.Refund.findOne({
+      sourceId: requestId,
+    }).lean();
+    expect(completedRefund._id).toEqual(failedRefund._id);
+    expect(completedRefund).toEqual(
+      expect.objectContaining({
+        status: 'COMPLETED',
+        providerRefundId: `SIM-REFUND-${failedRefund._id}`,
+      }),
+    );
+    expect(refundSpy).toHaveBeenCalledTimes(2);
     expect(await models.Refund.countDocuments({ sourceId: requestId })).toBe(1);
+    expect(await refundNotificationCount()).toBe(1);
   });
 
   it('records COD refunds explicitly and closes the INR with the same canonical refund flow', async () => {
+    const provider =
+      await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
+    const refundSpy = vi.spyOn(provider, 'refundOrder');
     await models.Order.updateOne({ _id: ids.order }, { paymentMethod: 'COD' });
     await models.CheckoutGroup.updateOne(
       { _id: ids.checkoutGroup },
@@ -736,6 +787,231 @@ describe('INR requests', () => {
       sourceId: created.body.data.id,
     }).lean();
     expect(refund.providerRefundId).toBe(`COD-${refund._id}`);
+    expect(refundSpy).not.toHaveBeenCalled();
+    expect(await refundNotificationCount()).toBe(1);
+  });
+
+  it('prevents rapid concurrent refund submissions from moving money twice', async () => {
+    const provider =
+      await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
+    const refundSpy = vi.spyOn(provider, 'refundOrder');
+    const request = await createOpenInr();
+    const seller = await login('seller@example.test');
+    const responses = await Promise.all([
+      mutate(seller, 'post', refundPath(request.id), {}, 'concurrent-a'),
+      mutate(seller, 'post', refundPath(request.id), {}, 'concurrent-b'),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+    expect(refundSpy).toHaveBeenCalledOnce();
+    expect(
+      await models.Refund.countDocuments({
+        sourceId: request.id,
+        status: 'COMPLETED',
+      }),
+    ).toBe(1);
+    expect(
+      await models.INRRequest.countDocuments({
+        _id: request.id,
+        status: 'CLOSED',
+        closeReason: 'SELLER_REFUNDED',
+      }),
+    ).toBe(1);
+    expect(await refundNotificationCount()).toBe(1);
+  });
+
+  it('rejects refunds that would exceed the canonical payment amount before provider processing', async () => {
+    const provider =
+      await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
+    const refundSpy = vi.spyOn(provider, 'refundOrder');
+    await models.Refund.create({
+      paymentId: ids.payment,
+      checkoutGroupId: ids.checkoutGroup,
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      sourceType: 'INR',
+      sourceId: objectId(),
+      amount: 4500,
+      currency: 'VND',
+      method: 'PAYPAL',
+      status: 'COMPLETED',
+      providerRefundId: 'SIM-REFUND-EXISTING',
+      completedAt: new Date(),
+    });
+    const request = await createOpenInr();
+    const seller = await login('seller@example.test');
+    await mutate(seller, 'post', refundPath(request.id), {}, 'over-cap').expect(
+      409,
+    );
+    expect(refundSpy).not.toHaveBeenCalled();
+    expect(await models.INRRequest.findById(request.id).lean()).toEqual(
+      expect.objectContaining({ status: 'OPEN' }),
+    );
+    expect(
+      await models.Refund.findOne({ sourceId: request.id }).lean(),
+    ).toEqual(
+      expect.objectContaining({
+        status: 'FAILED',
+        failureReason: 'Refund amount exceeds remaining payment amount',
+      }),
+    );
+    expect(await refundNotificationCount()).toBe(0);
+  });
+
+  it('recovers provider-success after a DB failure without calling the provider again', async () => {
+    const provider =
+      await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
+    const inrRepository =
+      await import('../../src/modules/inr-requests/inr-request.repository.js');
+    const refundSpy = vi.spyOn(provider, 'refundOrder');
+    vi.spyOn(inrRepository, 'closeOpenRequestForRefund').mockRejectedValueOnce(
+      new Error('injected INR close failure'),
+    );
+    const request = await createOpenInr();
+    const seller = await login('seller@example.test');
+    await mutate(
+      seller,
+      'post',
+      refundPath(request.id),
+      {},
+      'provider-success-db-fails',
+    ).expect(500);
+    const processingRefund = await models.Refund.findOne({
+      sourceId: request.id,
+    }).lean();
+    expect(processingRefund).toEqual(
+      expect.objectContaining({
+        status: 'PROCESSING',
+        providerRefundId: `SIM-REFUND-${processingRefund._id}`,
+      }),
+    );
+    expect(await models.INRRequest.findById(request.id).lean()).toEqual(
+      expect.objectContaining({ status: 'OPEN' }),
+    );
+    const retry = await mutate(
+      seller,
+      'post',
+      refundPath(request.id),
+      {},
+      'provider-success-retry',
+    ).expect(200);
+    expect(retry.body.data.refund.id).toBe(String(processingRefund._id));
+    expect(refundSpy).toHaveBeenCalledOnce();
+    expect(await models.Refund.findById(processingRefund._id).lean()).toEqual(
+      expect.objectContaining({ status: 'COMPLETED' }),
+    );
+    expect(await refundNotificationCount()).toBe(1);
+  });
+
+  it('revalidates refund execution after preview state changes', async () => {
+    const request = await createOpenInr();
+    const seller = await login('seller@example.test');
+    await seller
+      .get(`${prefix}/inr-requests/${request.id}/refund-preview`)
+      .expect(200);
+    await models.INRRequest.updateOne(
+      { _id: request.id },
+      {
+        status: 'CLOSED',
+        closeReason: 'ITEM_ARRIVED',
+        closedAt: new Date(),
+      },
+    );
+    await mutate(
+      seller,
+      'post',
+      refundPath(request.id),
+      {},
+      'preview-race',
+    ).expect(409);
+    expect(await models.Refund.countDocuments({ sourceId: request.id })).toBe(
+      0,
+    );
+    expect(await refundNotificationCount()).toBe(0);
+  });
+
+  it('keeps refund execution seller-scoped and server-derived', async () => {
+    const request = await createOpenInr();
+    const otherSeller = await login('seller2@example.test');
+    await mutate(
+      otherSeller,
+      'post',
+      refundPath(request.id),
+      {},
+      'wrong-seller-refund',
+    ).expect(404);
+    expect(await models.Refund.countDocuments({ sourceId: request.id })).toBe(
+      0,
+    );
+    expect(await refundNotificationCount()).toBe(0);
+  });
+
+  it('enforces canonical Refund model invariants', async () => {
+    const baseRefund = {
+      paymentId: ids.payment,
+      checkoutGroupId: ids.checkoutGroup,
+      buyerId: ids.buyer,
+      sellerId: ids.seller,
+      sourceType: 'INR',
+      sourceId: objectId(),
+      amount: 1000,
+      currency: 'VND',
+      method: 'PAYPAL',
+      status: 'PROCESSING',
+    };
+    const validationErrors = async (data) => {
+      try {
+        await new models.Refund(data).validate();
+        return null;
+      } catch (error) {
+        return error.errors;
+      }
+    };
+
+    await expect(
+      new models.Refund(baseRefund).validate(),
+    ).resolves.toBeUndefined();
+    await expect(
+      validationErrors({ ...baseRefund, amount: -1 }),
+    ).resolves.toHaveProperty('amount');
+    await expect(
+      validationErrors({ ...baseRefund, sourceType: 'RETURN' }),
+    ).resolves.toHaveProperty('sourceType');
+    await expect(
+      validationErrors({ ...baseRefund, sourceId: undefined }),
+    ).resolves.toHaveProperty('sourceId');
+    await expect(
+      validationErrors({ ...baseRefund, method: 'CARD' }),
+    ).resolves.toHaveProperty('method');
+    await expect(
+      validationErrors({ ...baseRefund, status: 'PENDING' }),
+    ).resolves.toHaveProperty('status');
+    await expect(
+      validationErrors({ ...baseRefund, status: 'COMPLETED' }),
+    ).resolves.toHaveProperty('completedAt');
+    await expect(
+      validationErrors({ ...baseRefund, completedAt: new Date() }),
+    ).resolves.toHaveProperty('completedAt');
+    await expect(
+      validationErrors({
+        ...baseRefund,
+        status: 'FAILED',
+        failedAt: new Date(),
+      }),
+    ).resolves.toHaveProperty('failureReason');
+    await expect(
+      new models.Refund({
+        ...baseRefund,
+        status: 'FAILED',
+        failedAt: new Date(),
+        failureReason: 'DECLINED',
+      }).validate(),
+    ).resolves.toBeUndefined();
+    await models.Refund.create(baseRefund);
+    await expect(models.Refund.create(baseRefund)).rejects.toMatchObject({
+      code: 11000,
+    });
   });
 
   it('redacts buyer order shipment tracking while preserving seller and shipper shipment visibility', async () => {

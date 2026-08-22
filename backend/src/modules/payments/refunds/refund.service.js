@@ -13,6 +13,8 @@ const invalidState = (message) =>
   new AppError(409, ERROR_CODES.PAYMENT_INVALID_STATE, message);
 const providerError = (message) =>
   new AppError(502, ERROR_CODES.PAYMENT_PROVIDER_ERROR, message);
+const refundCapacityError = () =>
+  invalidState('Refund amount exceeds remaining payment amount');
 
 const sanitizedReason = (reason) =>
   typeof reason === 'string' && reason.trim()
@@ -83,9 +85,24 @@ const runProvider = async (refund, payment) => {
 
 export const prepare = (data) => claimRefund(data);
 
+const ensurePaymentCapacity = async (refund, payment, claimToken) => {
+  const refunded = await repository.completedAmountForPayment(
+    payment._id,
+    refund._id,
+  );
+  if (refunded + refund.amount <= payment.amount) return;
+  await repository.fail(
+    refund._id,
+    claimToken,
+    'Refund amount exceeds remaining payment amount',
+  );
+  throw refundCapacityError();
+};
+
 export const processProvider = async ({ refund, payment, claimToken }) => {
   if (refund.providerRefundId) return refund;
   try {
+    await ensurePaymentCapacity(refund, payment, claimToken);
     const outcome = await runProvider(refund, payment);
     return await repository.recordProviderSuccess(refund._id, claimToken, {
       providerRefundId: outcome.providerRefundId,

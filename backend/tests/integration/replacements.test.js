@@ -1237,6 +1237,120 @@ describe('replacement domain foundation', () => {
     );
   });
 
+  it('lets the buyer confirm a delivered replacement and closes the INR without stock changes', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    await shipmentService.pickup(ids.sellerUser2, shipment._id);
+    await shipmentService.deliver(ids.sellerUser2, shipment._id);
+    const deliveredAt = (await replacementShipment(accepted.id)).deliveredAt;
+    const stockBefore = await productStock();
+
+    const result = await service.confirmReceived(ids.buyer, accepted.id);
+    const storedReplacement = await models.Replacement.findById(
+      accepted.id,
+    ).lean();
+    const storedInr = await models.INRRequest.findById(ids.inr).lean();
+    const storedShipment = await replacementShipment(accepted.id);
+
+    expect(result.replacement).toEqual(
+      expect.objectContaining({
+        status: 'COMPLETED',
+        inventoryClaimStatus: 'CONSUMED',
+      }),
+    );
+    expect(storedReplacement.completedAt).toBeInstanceOf(Date);
+    expect(storedInr).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'REPLACEMENT_RECEIVED',
+        resolutionMode: 'REPLACEMENT',
+      }),
+    );
+    expect(storedInr.closedAt).toBeInstanceOf(Date);
+    expect(storedShipment.status).toBe('DELIVERED');
+    expect(storedShipment.deliveredAt).toEqual(deliveredAt);
+    expect(await productStock()).toBe(stockBefore);
+    expect(await notifications({ eventType: 'REPLACEMENT_COMPLETED' })).toEqual(
+      [
+        expect.objectContaining({
+          userId: ids.sellerUser,
+          title: 'Replacement received',
+          message: 'The buyer confirmed receiving the replacement.',
+          referenceType: 'INRRequest',
+          referenceId: ids.inr,
+          eventKey: `REPLACEMENT_COMPLETED:${accepted.id}:SELLER`,
+        }),
+      ],
+    );
+  });
+
+  it('rejects confirm received from wrong actors and wrong states', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+
+    await expectStatus(
+      service.confirmReceived(ids.sellerUser, accepted.id),
+      403,
+    );
+    await expectStatus(
+      service.confirmReceived(ids.sellerUser2, accepted.id),
+      403,
+    );
+    await expectStatus(
+      service.confirmReceived(ids.otherBuyer, accepted.id),
+      403,
+    );
+    await expectStatus(service.confirmReceived(ids.buyer, accepted.id), 409);
+
+    await shipmentService.pickup(ids.sellerUser2, shipment._id);
+    await expectStatus(service.confirmReceived(ids.buyer, accepted.id), 409);
+    await shipmentService.deliver(ids.sellerUser2, shipment._id);
+    await models.Replacement.updateOne(
+      { _id: accepted.id },
+      { inventoryClaimStatus: 'CLAIMED' },
+    );
+    await expectStatus(service.confirmReceived(ids.buyer, accepted.id), 409);
+    await models.Replacement.updateOne(
+      { _id: accepted.id },
+      { inventoryClaimStatus: 'CONSUMED' },
+    );
+    await models.INRRequest.updateOne(
+      { _id: ids.inr },
+      { resolutionMode: 'NONE' },
+    );
+    await expectStatus(service.confirmReceived(ids.buyer, accepted.id), 409);
+  });
+
+  it('keeps duplicate buyer confirmations to one completion notification', async () => {
+    const accepted = await acceptedReplacement();
+    await service.prepareShipment(ids.sellerUser, accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    await shipmentService.pickup(ids.sellerUser2, shipment._id);
+    await shipmentService.deliver(ids.sellerUser2, shipment._id);
+
+    const results = await Promise.allSettled([
+      service.confirmReceived(ids.buyer, accepted.id),
+      service.confirmReceived(ids.buyer, accepted.id),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(await service.findById(accepted.id)).toEqual(
+      expect.objectContaining({
+        status: 'COMPLETED',
+        inventoryClaimStatus: 'CONSUMED',
+      }),
+    );
+    expect(
+      await notifications({ eventType: 'REPLACEMENT_COMPLETED' }),
+    ).toHaveLength(1);
+    expect(await productStock()).toBe(3);
+  });
+
   it('rejects duplicate replacement delivery without duplicate side effects', async () => {
     const accepted = await acceptedReplacement();
     await service.prepareShipment(ids.sellerUser, accepted.id);

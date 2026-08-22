@@ -1650,6 +1650,16 @@ export const schemas = {
       updatedAt: timestamp,
     },
   },
+  ConfirmReplacementReceivedResponse: {
+    type: 'object',
+    required: ['replacementId', 'status', 'completedAt', 'inrRequestId'],
+    properties: {
+      replacementId: objectId,
+      status: { type: 'string', enum: ['COMPLETED'] },
+      completedAt: timestamp,
+      inrRequestId: objectId,
+    },
+  },
   INRReplacementResolution: {
     type: 'object',
     required: ['current', 'history', 'availableActions'],
@@ -1673,6 +1683,8 @@ export const schemas = {
             'REFUND_INSTEAD',
             'PREPARE_REPLACEMENT_SHIPMENT',
             'ISSUE_REFUND',
+            'CLOSE_ORIGINAL_ITEM_ARRIVED',
+            'CONFIRM_REPLACEMENT_RECEIVED',
           ],
         },
       },
@@ -1968,7 +1980,7 @@ export const schemas = {
       closeReason: {
         type: 'string',
         nullable: true,
-        enum: ['ITEM_ARRIVED', 'SELLER_REFUNDED'],
+        enum: ['ITEM_ARRIVED', 'SELLER_REFUNDED', 'REPLACEMENT_RECEIVED'],
       },
     },
   },

@@ -88,3 +88,25 @@ export const markFulfillingFromShipmentPickup = (id, session) =>
       runValidators: true,
     },
   ).lean();
+
+export const markCompletedFromBuyerConfirmation = (id, completedAt, session) =>
+  Replacement.findOneAndUpdate(
+    {
+      _id: id,
+      status: 'FULFILLING',
+      inventoryClaimStatus: 'CONSUMED',
+    },
+    {
+      $set: {
+        status: 'COMPLETED',
+        completedAt,
+      },
+      $unset: { activeKey: 1 },
+    },
+    {
+      session,
+      returnDocument: 'after',
+      projection: publicProjection,
+      runValidators: true,
+    },
+  ).lean();

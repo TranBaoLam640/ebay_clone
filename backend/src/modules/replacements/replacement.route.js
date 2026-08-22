@@ -21,3 +21,8 @@ replacementRoute.post(
   validate(replacementIdSchema),
   controller.prepareShipment,
 );
+replacementRoute.post(
+  '/:replacementId/confirm-received',
+  validate(replacementIdSchema),
+  controller.confirmReceived,
+);

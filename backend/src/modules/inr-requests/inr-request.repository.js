@@ -214,3 +214,15 @@ export const closeOpenRequestForRefund = (
     { status: 'CLOSED', closedAt, closeReason, refundId },
     { session, returnDocument: 'after', projection: publicProjection },
   ).lean();
+
+export const closeOpenReplacementRequest = (
+  id,
+  buyerId,
+  { closedAt, closeReason },
+  session,
+) =>
+  INRRequest.findOneAndUpdate(
+    { _id: id, buyerId, status: 'OPEN', resolutionMode: 'REPLACEMENT' },
+    { status: 'CLOSED', closedAt, closeReason },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();

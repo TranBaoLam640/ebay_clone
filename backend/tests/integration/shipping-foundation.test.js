@@ -13,6 +13,7 @@ import { authorize } from '../../src/common/middleware/authorize.js';
 import { signAccess } from '../../src/common/utils/token.js';
 import { Notification } from '../../src/modules/notifications/notification.model.js';
 import { Order } from '../../src/modules/orders/order.model.js';
+import { INRRequest } from '../../src/modules/inr-requests/inr-request.model.js';
 import { Replacement } from '../../src/modules/replacements/replacement.model.js';
 import { User } from '../../src/modules/users/user.model.js';
 import { Shipment } from '../../src/modules/shipments/shipment.model.js';
@@ -135,6 +136,7 @@ beforeAll(async () => {
   await Promise.all([
     User.init(),
     Order.init(),
+    INRRequest.init(),
     Replacement.init(),
     Shipment.init(),
     Notification.init(),
@@ -421,10 +423,31 @@ describe('shipping backend foundation', () => {
 
   it('does not run original order delivery side effects for replacement shipments', async () => {
     const order = await orderDocument();
-    const replacement = await replacementDocument({
-      orderId: order._id,
+    const request = await INRRequest.create({
       buyerId: order.buyerId,
       sellerId: order.sellerId,
+      orderId: order._id,
+      orderItemId: order.items[0]._id,
+      productId: order.items[0].productId,
+      shipmentId: id(),
+      requestedResolution: 'WANT_ITEM',
+      resolutionMode: 'REPLACEMENT',
+      quantityMissing: 1,
+      details: 'Replacement shipping fixture',
+      requestAmount: 100,
+      currency: 'VND',
+      conversationId: id(),
+      status: 'OPEN',
+    });
+    const replacement = await replacementDocument({
+      inrRequestId: request._id,
+      orderId: order._id,
+      orderItemId: order.items[0]._id,
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+      productId: order.items[0].productId,
+      status: 'FULFILLING',
+      inventoryClaimStatus: 'CONSUMED',
     });
     const shipperId = id();
     const shipment = await Shipment.create(

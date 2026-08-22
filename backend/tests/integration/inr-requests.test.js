@@ -272,6 +272,8 @@ const createOpenInr = async (overrides = {}) => {
 };
 
 const refundPath = (requestId) => `/inr-requests/${requestId}/refund`;
+const confirmReceivedPath = (replacementId) =>
+  `/replacements/${replacementId}/confirm-received`;
 
 const refundNotificationCount = () =>
   models.Notification.countDocuments({
@@ -581,7 +583,11 @@ describe('INR requests', () => {
       .expect(200);
     expect(buyerProposalDetail.body.data.replacementResolution).toEqual(
       expect.objectContaining({
-        availableActions: ['ACCEPT_REPLACEMENT', 'REFUND_INSTEAD'],
+        availableActions: [
+          'CLOSE_ORIGINAL_ITEM_ARRIVED',
+          'ACCEPT_REPLACEMENT',
+          'REFUND_INSTEAD',
+        ],
         current: expect.objectContaining({
           id: proposal.id,
           status: 'PROPOSED',
@@ -699,6 +705,68 @@ describe('INR requests', () => {
     expect(
       sellerTransitDetail.body.data.replacementResolution.availableActions,
     ).toEqual([]);
+  });
+
+  it('allows only the buyer to confirm a delivered replacement through the API', async () => {
+    const buyer = await login();
+    const seller = await login('seller@example.test');
+    const otherBuyer = await login('other@example.test');
+    const otherSeller = await login('seller2@example.test');
+    const shipper = await login('shipper@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      '/inr-requests',
+      createBody({ requestedResolution: 'WANT_ITEM' }),
+    ).expect(201);
+    const accepted = await proposeReplacement(
+      ids.buyer,
+      created.body.data.id,
+    ).then((proposal) => acceptReplacement(ids.sellerUser, proposal.id));
+    await prepareReplacementShipment(accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    await shipmentService.pickup(ids.shipper, shipment._id);
+    await shipmentService.deliver(ids.shipper, shipment._id);
+
+    await mutate(seller, 'post', confirmReceivedPath(accepted.id), {}).expect(
+      403,
+    );
+    await mutate(
+      otherBuyer,
+      'post',
+      confirmReceivedPath(accepted.id),
+      {},
+    ).expect(403);
+    await mutate(
+      otherSeller,
+      'post',
+      confirmReceivedPath(accepted.id),
+      {},
+    ).expect(403);
+    await mutate(shipper, 'post', confirmReceivedPath(accepted.id), {}).expect(
+      403,
+    );
+
+    const confirmed = await mutate(
+      buyer,
+      'post',
+      confirmReceivedPath(accepted.id),
+      {},
+    ).expect(200);
+    expect(confirmed.body.data).toEqual(
+      expect.objectContaining({
+        replacementId: accepted.id,
+        status: 'COMPLETED',
+      }),
+    );
+    expect(
+      await models.INRRequest.findById(created.body.data.id).lean(),
+    ).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'REPLACEMENT_RECEIVED',
+      }),
+    );
   });
 
   it('previews seller refund with server-derived amount and rejects non-owners or closed requests', async () => {
@@ -1001,6 +1069,129 @@ describe('INR requests', () => {
     );
   });
 
+  it('reports replacement lifecycle conflicts without auto-repairing them', async () => {
+    const makeRequest = (overrides = {}) =>
+      models.INRRequest.create({
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        orderId: ids.order,
+        orderItemId: objectId(),
+        productId: ids.product,
+        shipmentId: ids.shipment,
+        requestedResolution: 'WANT_ITEM',
+        resolutionMode: 'REPLACEMENT',
+        quantityMissing: 1,
+        details: 'Synthetic maintenance fixture',
+        requestAmount: 1000,
+        currency: 'VND',
+        conversationId: objectId(),
+        status: 'OPEN',
+        ...overrides,
+      });
+    const makeReplacement = (request, overrides = {}) =>
+      models.Replacement.create({
+        inrRequestId: request._id,
+        orderId: request.orderId,
+        orderItemId: request.orderItemId,
+        buyerId: request.buyerId,
+        sellerId: request.sellerId,
+        productId: request.productId,
+        quantity: 1,
+        initiatorRole: 'SELLER',
+        initiatedBy: ids.sellerUser,
+        status: 'PROPOSED',
+        inventoryClaimStatus: 'UNCLAIMED',
+        ...overrides,
+      });
+    const now = new Date();
+    const closedState = {
+      status: 'CLOSED',
+      closedAt: now,
+      closeReason: 'ITEM_ARRIVED',
+    };
+    const closedActiveRequest = await makeRequest(closedState);
+    const activeProposal = await makeReplacement(closedActiveRequest);
+
+    const closedClaimedRequest = await makeRequest(closedState);
+    const claimedReplacement = await makeReplacement(closedClaimedRequest, {
+      status: 'ACCEPTED',
+      inventoryClaimStatus: 'CLAIMED',
+      acceptedAt: now,
+      acceptedBy: ids.sellerUser,
+      inventoryClaimedAt: now,
+    });
+
+    const completedOpenRequest = await makeRequest();
+    const completedReplacement = await makeReplacement(completedOpenRequest, {
+      status: 'COMPLETED',
+      completedAt: now,
+    });
+
+    const abandonedOpenRequest = await makeRequest();
+    const abandonedReplacement = await makeReplacement(abandonedOpenRequest, {
+      status: 'CANCELLED',
+      cancelledAt: now,
+      cancelledBy: ids.buyer,
+      cancellation: { reason: 'ORIGINAL_ITEM_ARRIVED' },
+    });
+
+    const report = await maintainInrResolutionGuard();
+    const conflicts = report.lifecycleConflicts.map((conflict) => ({
+      type: conflict.type,
+      inrRequestId: String(conflict.inrRequestId),
+      replacementId: String(conflict.replacementId),
+      replacementStatus: conflict.replacementStatus,
+      inventoryClaimStatus: conflict.inventoryClaimStatus,
+    }));
+
+    expect(conflicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'CLOSED_INR_WITH_ACTIVE_REPLACEMENT',
+          inrRequestId: String(closedActiveRequest.id),
+          replacementId: String(activeProposal._id),
+        }),
+        expect.objectContaining({
+          type: 'CLOSED_INR_WITH_ACTIVE_REPLACEMENT',
+          inrRequestId: String(closedClaimedRequest.id),
+          replacementId: String(claimedReplacement._id),
+        }),
+        expect.objectContaining({
+          type: 'CLOSED_INR_WITH_CLAIMED_INVENTORY',
+          inrRequestId: String(closedClaimedRequest.id),
+          replacementId: String(claimedReplacement._id),
+          inventoryClaimStatus: 'CLAIMED',
+        }),
+        expect.objectContaining({
+          type: 'COMPLETED_REPLACEMENT_WITH_OPEN_INR',
+          inrRequestId: String(completedOpenRequest.id),
+          replacementId: String(completedReplacement._id),
+        }),
+        expect.objectContaining({
+          type: 'OPEN_REPLACEMENT_MODE_WITH_ABANDONED_TERMINAL_REPLACEMENT',
+          inrRequestId: String(abandonedOpenRequest.id),
+          replacementId: String(abandonedReplacement._id),
+        }),
+      ]),
+    );
+    expect(
+      await models.INRRequest.findById(closedActiveRequest.id).lean(),
+    ).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        resolutionMode: 'REPLACEMENT',
+      }),
+    );
+    expect(
+      await models.Replacement.findById(claimedReplacement._id).lean(),
+    ).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        inventoryClaimStatus: 'CLAIMED',
+      }),
+    );
+  });
+
   it('lets the buyer request refund instead from proposed replacement states without creating a Refund', async () => {
     const buyer = await login();
     const sellerProposedRequest = await createOpenInr({
@@ -1156,6 +1347,147 @@ describe('INR requests', () => {
     expect(await stock()).toBe(4);
   });
 
+  it('hardens generic item-arrived close across replacement and refund modes', async () => {
+    const buyer = await login();
+
+    const proposedRequest = await createOpenInr({
+      requestedResolution: 'WANT_ITEM',
+    });
+    const proposed = await proposeReplacement(
+      ids.sellerUser,
+      proposedRequest.id,
+    );
+    await mutate(
+      buyer,
+      'patch',
+      `/inr-requests/${proposedRequest.id}/close`,
+      {},
+    ).expect(200);
+    expect(await models.Replacement.findById(proposed.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        inventoryClaimStatus: 'UNCLAIMED',
+      }),
+    );
+    expect(await models.INRRequest.findById(proposedRequest.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'ITEM_ARRIVED',
+        resolutionMode: 'NONE',
+      }),
+    );
+    expect(await stock()).toBe(5);
+
+    const acceptedRequest = await createOpenInr({
+      requestedResolution: 'WANT_ITEM',
+    });
+    const accepted = await proposeReplacement(
+      ids.buyer,
+      acceptedRequest.id,
+    ).then((proposal) => acceptReplacement(ids.sellerUser, proposal.id));
+    expect(await stock()).toBe(4);
+    await mutate(
+      buyer,
+      'patch',
+      `/inr-requests/${acceptedRequest.id}/close`,
+      {},
+    ).expect(200);
+    expect(await models.Replacement.findById(accepted.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        inventoryClaimStatus: 'RELEASED',
+      }),
+    );
+    expect(await models.INRRequest.findById(acceptedRequest.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'ITEM_ARRIVED',
+        resolutionMode: 'NONE',
+      }),
+    );
+    expect(await stock()).toBe(5);
+
+    const readyRequest = await createOpenInr({
+      requestedResolution: 'WANT_ITEM',
+    });
+    const ready = await proposeReplacement(ids.buyer, readyRequest.id).then(
+      (proposal) => acceptReplacement(ids.sellerUser, proposal.id),
+    );
+    await prepareReplacementShipment(ready.id);
+    await mutate(
+      buyer,
+      'patch',
+      `/inr-requests/${readyRequest.id}/close`,
+      {},
+    ).expect(200);
+    expect(await models.Replacement.findById(ready.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        inventoryClaimStatus: 'RELEASED',
+      }),
+    );
+    expect((await replacementShipment(ready.id)).status).toBe('CANCELLED');
+    expect(await stock()).toBe(5);
+
+    const transitRequest = await createOpenInr({
+      requestedResolution: 'WANT_ITEM',
+    });
+    const transit = await proposeReplacement(ids.buyer, transitRequest.id).then(
+      (proposal) => acceptReplacement(ids.sellerUser, proposal.id),
+    );
+    await prepareReplacementShipment(transit.id);
+    const transitShipment = await replacementShipment(transit.id);
+    await shipmentService.pickup(ids.shipper, transitShipment._id);
+    await mutate(
+      buyer,
+      'patch',
+      `/inr-requests/${transitRequest.id}/close`,
+      {},
+    ).expect(409);
+    expect(await models.INRRequest.findById(transitRequest.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'OPEN',
+        resolutionMode: 'REPLACEMENT',
+      }),
+    );
+
+    await shipmentService.deliver(ids.shipper, transitShipment._id);
+    await mutate(
+      buyer,
+      'patch',
+      `/inr-requests/${transitRequest.id}/close`,
+      {},
+    ).expect(409);
+    await mutate(buyer, 'post', confirmReceivedPath(transit.id), {}).expect(
+      200,
+    );
+    expect(await models.INRRequest.findById(transitRequest.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'REPLACEMENT_RECEIVED',
+        resolutionMode: 'REPLACEMENT',
+      }),
+    );
+
+    const refundRequest = await createOpenInr();
+    await models.INRRequest.updateOne(
+      { _id: refundRequest.id },
+      { resolutionMode: 'REFUND' },
+    );
+    await mutate(
+      buyer,
+      'patch',
+      `/inr-requests/${refundRequest.id}/close`,
+      {},
+    ).expect(409);
+    expect(await models.INRRequest.findById(refundRequest.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'OPEN',
+        resolutionMode: 'REFUND',
+      }),
+    );
+  });
+
   it('seller refund terminalizes pre-transit replacements before provider execution', async () => {
     const provider =
       await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
@@ -1197,6 +1529,7 @@ describe('INR requests', () => {
     const provider =
       await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
     const refundSpy = vi.spyOn(provider, 'refundOrder');
+    const buyer = await login();
     const seller = await login('seller@example.test');
     const request = await createOpenInr({ requestedResolution: 'WANT_ITEM' });
     const accepted = await proposeReplacement(ids.buyer, request.id).then(
@@ -1231,6 +1564,17 @@ describe('INR requests', () => {
     ).expect(409);
     expect(refundSpy).not.toHaveBeenCalled();
     expect(await stock()).toBe(4);
+    await mutate(buyer, 'post', confirmReceivedPath(accepted.id), {}).expect(
+      200,
+    );
+    await mutate(
+      seller,
+      'post',
+      refundPath(request.id),
+      {},
+      'refund-after-completion',
+    ).expect(409);
+    expect(refundSpy).not.toHaveBeenCalled();
   });
 
   it('serializes replacement proposal vs seller refund without mixed resolution', async () => {
@@ -1337,6 +1681,86 @@ describe('INR requests', () => {
       expect(storedShipment.status).toBe('IN_TRANSIT');
       expect(await stock()).toBe(4);
     }
+  });
+
+  it('serializes generic item-arrived close vs replacement pickup into one valid branch', async () => {
+    const buyer = await login();
+    const request = await createOpenInr({ requestedResolution: 'WANT_ITEM' });
+    const accepted = await proposeReplacement(ids.buyer, request.id).then(
+      (proposal) => acceptReplacement(ids.sellerUser, proposal.id),
+    );
+    await prepareReplacementShipment(accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+
+    const [closeResponse] = await Promise.all([
+      mutate(buyer, 'patch', `/inr-requests/${request.id}/close`, {}),
+      shipmentService.pickup(ids.shipper, shipment._id).catch((error) => error),
+    ]);
+
+    const storedRequest = await models.INRRequest.findById(request.id).lean();
+    const storedReplacement = await models.Replacement.findById(
+      accepted.id,
+    ).lean();
+    const storedShipment = await models.Shipment.findById(shipment._id).lean();
+
+    if (storedRequest.status === 'CLOSED') {
+      expect(closeResponse.status).toBe(200);
+      expect(storedRequest).toEqual(
+        expect.objectContaining({
+          closeReason: 'ITEM_ARRIVED',
+          resolutionMode: 'NONE',
+        }),
+      );
+      expect(storedReplacement.status).toBe('CANCELLED');
+      expect(storedReplacement.inventoryClaimStatus).toBe('RELEASED');
+      expect(storedShipment.status).toBe('CANCELLED');
+      expect(await stock()).toBe(5);
+    } else {
+      expect(closeResponse.status).toBe(409);
+      expect(storedRequest).toEqual(
+        expect.objectContaining({
+          status: 'OPEN',
+          resolutionMode: 'REPLACEMENT',
+        }),
+      );
+      expect(storedReplacement.status).toBe('FULFILLING');
+      expect(storedReplacement.inventoryClaimStatus).toBe('CONSUMED');
+      expect(storedShipment.status).toBe('IN_TRANSIT');
+      expect(await stock()).toBe(4);
+    }
+  });
+
+  it('serializes generic item-arrived close vs confirm-received without ambiguous close reason', async () => {
+    const buyer = await login();
+    const request = await createOpenInr({ requestedResolution: 'WANT_ITEM' });
+    const accepted = await proposeReplacement(ids.buyer, request.id).then(
+      (proposal) => acceptReplacement(ids.sellerUser, proposal.id),
+    );
+    await prepareReplacementShipment(accepted.id);
+    const shipment = await replacementShipment(accepted.id);
+    await shipmentService.pickup(ids.shipper, shipment._id);
+    await shipmentService.deliver(ids.shipper, shipment._id);
+
+    const [closeResponse, confirmResponse] = await Promise.all([
+      mutate(buyer, 'patch', `/inr-requests/${request.id}/close`, {}),
+      mutate(buyer, 'post', confirmReceivedPath(accepted.id), {}),
+    ]);
+
+    expect(closeResponse.status).toBe(409);
+    expect(confirmResponse.status).toBe(200);
+    expect(await models.INRRequest.findById(request.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'REPLACEMENT_RECEIVED',
+        resolutionMode: 'REPLACEMENT',
+      }),
+    );
+    expect(await models.Replacement.findById(accepted.id).lean()).toEqual(
+      expect.objectContaining({
+        status: 'COMPLETED',
+        inventoryClaimStatus: 'CONSUMED',
+      }),
+    );
   });
 
   it('serializes seller refund vs replacement pickup into refund or fulfillment branch', async () => {

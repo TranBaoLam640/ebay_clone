@@ -15,6 +15,7 @@ import { useInrActions, useInrRequest } from "../hooks/use-inr-requests";
 import type { InrBuyerRequest, InrReplacementAction } from "../types/inr.types";
 import {
   inrResolutionLabel,
+  inrCloseReasonLabel,
   inrStatusLabel,
   inrStatusTone,
 } from "../utils/inr-status";
@@ -36,6 +37,7 @@ export default function BuyerInrDetailPage() {
     declineReplacement,
     refundInstead,
     prepareReplacementShipment,
+    confirmReplacementReceived,
   } = useInrActions();
   const [confirmClose, setConfirmClose] = useState(false);
   const [loadingAction, setLoadingAction] =
@@ -120,6 +122,10 @@ export default function BuyerInrDetailPage() {
   };
 
   const replacementId = r.replacementResolution.current?.id;
+  const canCloseOriginalItemArrived =
+    r.replacementResolution.availableActions.includes(
+      "CLOSE_ORIGINAL_ITEM_ARRIVED",
+    );
 
   return (
     <div className="flex flex-col gap-6">
@@ -170,6 +176,12 @@ export default function BuyerInrDetailPage() {
               />
               {r.closedAt && (
                 <Field label="Closed" value={formatDateTime(r.closedAt)} />
+              )}
+              {r.closeReason && (
+                <Field
+                  label="Resolution"
+                  value={inrCloseReasonLabel(r.closeReason)}
+                />
               )}
             </dl>
             {r.details && (
@@ -230,6 +242,14 @@ export default function BuyerInrDetailPage() {
             "Replacement shipment prepared.",
           )
         }
+        onConfirmReceived={() =>
+          replacementId &&
+          runReplacementAction(
+            "CONFIRM_REPLACEMENT_RECEIVED",
+            () => confirmReplacementReceived.mutateAsync(replacementId),
+            "Replacement received. This request has been resolved.",
+          )
+        }
       />
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -247,7 +267,7 @@ export default function BuyerInrDetailPage() {
               Message seller
             </Button>
           </Link>
-          {r.status === "OPEN" && (
+          {canCloseOriginalItemArrived && (
             <Button variant="secondary" onClick={() => setConfirmClose(true)}>
               <Icon variant="icon-check" size={16} />
               Item arrived

@@ -23,6 +23,7 @@ import type {
   InrSellerRequest,
 } from "../types/inr.types";
 import {
+  inrCloseReasonLabel,
   inrResolutionLabel,
   inrStatusLabel,
   inrStatusTone,
@@ -188,6 +189,12 @@ export default function SellerRequestDetailPage() {
               {r.closedAt && (
                 <Field label="Closed" value={formatDateTime(r.closedAt)} />
               )}
+              {r.closeReason && (
+                <Field
+                  label="Resolution"
+                  value={inrCloseReasonLabel(r.closeReason)}
+                />
+              )}
               {r.closeReason === "SELLER_REFUNDED" && r.refund && (
                 <Field
                   label="Refunded"
@@ -259,6 +266,7 @@ export default function SellerRequestDetailPage() {
             "Replacement shipment prepared.",
           )
         }
+        onConfirmReceived={() => undefined}
       />
 
       <section className="rounded-xl border border-border bg-surface p-5">

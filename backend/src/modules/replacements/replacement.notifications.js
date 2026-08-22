@@ -195,3 +195,22 @@ export const notifyReplacementDelivered = (replacement, session) =>
     },
     session,
   );
+
+export const notifyReplacementCompleted = async (replacement, session) => {
+  const recipient = await sellerUserId(replacement.sellerId, session);
+  if (!recipient) return null;
+  return disputeNotification(
+    recipient,
+    {
+      title: 'Replacement received',
+      message: 'The buyer confirmed receiving the replacement.',
+      referenceId: replacement.inrRequestId,
+      eventType: USER4_NOTIFICATION_EVENTS.REPLACEMENT_COMPLETED,
+      eventKey: `${replacementKey(
+        replacement,
+        USER4_NOTIFICATION_EVENTS.REPLACEMENT_COMPLETED,
+      )}:SELLER`,
+    },
+    session,
+  );
+};

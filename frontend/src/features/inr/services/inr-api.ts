@@ -74,4 +74,7 @@ export const inrApi = {
       replacementId: string;
       shipment: InrReplacementShipment;
     }>("post", `/replacements/${replacementId}/shipment`),
+
+  confirmReplacementReceived: (replacementId: string) =>
+    apiMutate("post", `/replacements/${replacementId}/confirm-received`),
 };

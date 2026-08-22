@@ -43,3 +43,17 @@ export const prepareShipment = async (req, res, next) => {
     next(error);
   }
 };
+
+export const confirmReceived = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await replacementChatService.confirmReceived(
+        req.user.id,
+        req.validated.params.replacementId,
+      ),
+    );
+  } catch (error) {
+    next(error);
+  }
+};

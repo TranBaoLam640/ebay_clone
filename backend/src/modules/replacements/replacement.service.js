@@ -19,6 +19,7 @@ import {
   notifyRefundInsteadRequested,
   notifyReplacementAccepted,
   notifyReplacementCancelled,
+  notifyReplacementCompleted,
   notifyReplacementDeclined,
   notifyReplacementProposed,
 } from './replacement.notifications.js';
@@ -308,7 +309,7 @@ const loadActionContext = async (userId, id, session) => {
     throw new AppError(404, ERROR_CODES.INR_NOT_FOUND, 'INR request not found');
   const role = await roleFor(userId, request, session);
   if (!role) throw forbidden('Only the INR buyer or seller can act');
-  return { replacement, role };
+  return { replacement, request, role };
 };
 
 const transitionOrThrow = async ({
@@ -371,6 +372,56 @@ export const proposeInSession = async (userId, input, session) => {
       throw invalidState('An active replacement already exists');
     throw error;
   }
+};
+
+const cancelAcceptedPreTransit = async ({
+  replacement,
+  userId,
+  session,
+  now,
+  reason,
+}) => {
+  const shipment = await shipmentRepository.findByReplacementId(
+    replacement._id,
+    session,
+  );
+  if (shipment && shipment.status !== 'READY_FOR_PICKUP')
+    throw invalidState('Replacement cannot be cancelled after pickup');
+  if (shipment) {
+    const cancelledShipment =
+      await shipmentRepository.cancelReadyForPickupByReplacementId(
+        replacement._id,
+        now,
+        session,
+      );
+    if (!cancelledShipment)
+      throw invalidState('Replacement shipment cannot be cancelled');
+  }
+  const restored = await productRepository.restoreStock(
+    replacement.productId,
+    replacement.quantity,
+    session,
+  );
+  if (!restored?.matchedCount)
+    throw invalidState('Replacement inventory could not be released');
+  return transitionOrThrow({
+    id: replacement._id,
+    from: ['ACCEPTED'],
+    filter: { inventoryClaimStatus: 'CLAIMED' },
+    update: {
+      $set: {
+        status: 'CANCELLED',
+        cancelledBy: userId,
+        cancelledAt: now,
+        inventoryClaimStatus: 'RELEASED',
+        inventoryReleasedAt: now,
+        cancellation: { reason },
+      },
+      $unset: { activeKey: 1 },
+    },
+    session,
+    staleMessage: 'Replacement cannot be cancelled',
+  });
 };
 
 export const propose = (userId, input) =>
@@ -544,6 +595,119 @@ export const prepareShipment = (userId, id, { now = new Date() } = {}) =>
     }
     throw new Error('Shipment tracking number generation failed');
   });
+
+export const terminalizeForOriginalItemArrived = async ({
+  request,
+  userId,
+  session,
+  now = new Date(),
+}) => {
+  const replacement = await repository.findActiveByInrRequest(
+    request._id,
+    session,
+  );
+  if (!replacement) throw invalidState('No active replacement to close');
+  await ensureReplacementMode(replacement, session);
+  if (String(replacement.buyerId) !== String(userId))
+    throw forbidden('Only the INR buyer can close original item arrival');
+
+  if (replacement.status === 'PROPOSED') {
+    const changed = await repository.transition(
+      replacement._id,
+      ['PROPOSED'],
+      {
+        $set: {
+          status: 'CANCELLED',
+          cancelledBy: userId,
+          cancelledAt: now,
+          inventoryClaimStatus: 'UNCLAIMED',
+          cancellation: { reason: 'ORIGINAL_ITEM_ARRIVED' },
+        },
+        $unset: { activeKey: 1 },
+      },
+      session,
+      { inventoryClaimStatus: 'UNCLAIMED' },
+    );
+    if (!changed)
+      throw invalidState('Replacement can no longer close as item arrived');
+    return releaseReplacementMode(changed, session, now);
+  }
+
+  if (replacement.status === 'ACCEPTED') {
+    const cancelled = await cancelAcceptedPreTransit({
+      replacement,
+      userId,
+      session,
+      now,
+      reason: 'ORIGINAL_ITEM_ARRIVED',
+    });
+    return releaseReplacementMode(cancelled, session, now);
+  }
+
+  throw invalidState('Replacement is already in fulfillment');
+};
+
+export const confirmReceived = (userId, id, { now = new Date() } = {}) =>
+  checkoutRepository
+    .transaction(async (session) => {
+      const { replacement, request, role } = await loadActionContext(
+        userId,
+        id,
+        session,
+      );
+      if (role !== 'BUYER' || String(replacement.buyerId) !== String(userId))
+        throw forbidden('Only the INR buyer can confirm replacement receipt');
+      if (request.status !== 'OPEN' || request.resolutionMode !== 'REPLACEMENT')
+        throw invalidState('Replacement receipt requires an open INR');
+      if (
+        String(replacement.inrRequestId) !== String(request._id) ||
+        String(replacement.orderId) !== String(request.orderId) ||
+        String(replacement.orderItemId) !== String(request.orderItemId) ||
+        String(replacement.buyerId) !== String(request.buyerId)
+      )
+        throw invalidState('Replacement does not match INR request');
+      if (
+        replacement.status !== 'FULFILLING' ||
+        replacement.inventoryClaimStatus !== 'CONSUMED'
+      )
+        throw invalidState('Replacement is not ready for receipt confirmation');
+      const shipment = await shipmentRepository.findByReplacementId(
+        replacement._id,
+        session,
+      );
+      if (
+        !shipment ||
+        shipment.purpose !== 'REPLACEMENT' ||
+        String(shipment.replacementId) !== String(replacement._id) ||
+        shipment.status !== 'DELIVERED'
+      )
+        throw invalidState('Replacement shipment has not been delivered');
+      const completed = await repository.markCompletedFromBuyerConfirmation(
+        replacement._id,
+        now,
+        session,
+      );
+      if (!completed) throw invalidState('Replacement could not be completed');
+      const closed = await inrRepository.closeOpenReplacementRequest(
+        request._id,
+        userId,
+        {
+          closedAt: now,
+          closeReason: 'REPLACEMENT_RECEIVED',
+        },
+        session,
+      );
+      if (!closed) throw invalidState('INR request could not be closed');
+      return { replacement: view(completed), request: closed };
+    })
+    .then(async (result) => {
+      try {
+        await notifyReplacementCompleted(result.replacement);
+      } catch {
+        // Business completion has committed; notification uniqueness/retry can be handled separately.
+      }
+      return result;
+    });
 
 export const requestRefundInstead = (
   userId,

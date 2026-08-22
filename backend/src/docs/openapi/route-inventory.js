@@ -108,6 +108,7 @@ export const EXPECTED_ROUTE_INVENTORY = [
   'POST /api/v1/replacements/{replacementId}/accept',
   'POST /api/v1/replacements/{replacementId}/decline',
   'POST /api/v1/replacements/{replacementId}/shipment',
+  'POST /api/v1/replacements/{replacementId}/confirm-received',
 ];
 
 export const OUT_OF_SCOPE_PATH_FRAGMENTS = ['admin'];

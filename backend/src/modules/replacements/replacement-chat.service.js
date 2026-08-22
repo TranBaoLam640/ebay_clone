@@ -144,3 +144,17 @@ export const prepareShipment = async (userId, replacementId) => {
     },
   };
 };
+
+export const confirmReceived = async (userId, replacementId) => {
+  const result = await replacementService.confirmReceived(
+    userId,
+    replacementId,
+  );
+  await emitReplacementUpdate(result.replacement.id);
+  return {
+    replacementId: result.replacement.id,
+    status: result.replacement.status,
+    completedAt: result.replacement.completedAt,
+    inrRequestId: result.replacement.inrRequestId,
+  };
+};

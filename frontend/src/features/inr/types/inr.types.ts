@@ -3,7 +3,8 @@ import type { PaginationMeta } from "@/services/types";
 export type InrStatus = "OPEN" | "CLOSED";
 export type InrResolution = "REFUND" | "WANT_ITEM";
 export type InrType = "ITEM_NOT_RECEIVED";
-export type InrCloseReason = "ITEM_ARRIVED" | "SELLER_REFUNDED";
+export type InrCloseReason =
+  "ITEM_ARRIVED" | "SELLER_REFUNDED" | "REPLACEMENT_RECEIVED";
 export type InrReplacementStatus =
   | "PROPOSED"
   | "ACCEPTED"
@@ -20,7 +21,9 @@ export type InrReplacementAction =
   | "DECLINE_REPLACEMENT"
   | "REFUND_INSTEAD"
   | "PREPARE_REPLACEMENT_SHIPMENT"
-  | "ISSUE_REFUND";
+  | "ISSUE_REFUND"
+  | "CLOSE_ORIGINAL_ITEM_ARRIVED"
+  | "CONFIRM_REPLACEMENT_RECEIVED";
 
 export interface InrItemSummary {
   id: string;

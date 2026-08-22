@@ -52,4 +52,20 @@ export const replacementPaths = {
       security: security.unsafe,
     }),
   },
+  '/replacements/{replacementId}/confirm-received': {
+    post: operation({
+      tag: 'INR Requests',
+      operationId: 'confirmReplacementReceived',
+      summary: 'Confirm receipt of a delivered INR replacement',
+      description:
+        'Buyer-only action. The server derives all business state and requires an open replacement-mode INR, a fulfilling replacement with consumed inventory, and a delivered replacement shipment. No request body fields can set status, close reason, or timestamps.',
+      parameters: [replacementId],
+      success: response(
+        'Completed replacement confirmation',
+        ref('ConfirmReplacementReceivedResponse'),
+      ),
+      errors: [400, 401, 403, 404, 409, 429, 500],
+      security: security.unsafe,
+    }),
+  },
 };

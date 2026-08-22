@@ -189,6 +189,21 @@ export const deliver = async (shipperId, shipmentId) => {
       String(existing.shipperId) !== String(shipperId)
     )
       throw invalidState('Shipment cannot be delivered');
+    let replacement = null;
+    if (existing.purpose === 'REPLACEMENT') {
+      replacement = await replacementRepository.findById(
+        existing.replacementId,
+        session,
+      );
+      if (!replacement)
+        throw invalidState('Replacement shipment cannot be delivered');
+      const request = await inrRepository.requireReplacementResolution(
+        replacement.inrRequestId,
+        session,
+      );
+      if (!request)
+        throw invalidState('Replacement resolution is no longer active');
+    }
     const deliveredAt = new Date();
     const delivered = await repository.markDelivered(
       shipmentId,
@@ -215,10 +230,6 @@ export const deliver = async (shipperId, shipmentId) => {
       );
     }
     if (existing.purpose === 'REPLACEMENT') {
-      const replacement = await replacementRepository.findById(
-        existing.replacementId,
-        session,
-      );
       if (replacement) await notifyReplacementDelivered(replacement, session);
       replacementId = existing.replacementId;
     }

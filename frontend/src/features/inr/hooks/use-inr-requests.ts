@@ -117,5 +117,10 @@ export function useInrActions() {
         inrApi.prepareReplacementShipment(replacementId),
       onSuccess: invalidate,
     }),
+    confirmReplacementReceived: useMutation({
+      mutationFn: (replacementId: string) =>
+        inrApi.confirmReplacementReceived(replacementId),
+      onSuccess: invalidate,
+    }),
   };
 }

@@ -46,6 +46,7 @@ interface ReplacementResolutionCardProps {
   onDecline: () => void;
   onRefundInstead: () => void;
   onPrepareShipment: () => void;
+  onConfirmReceived: () => void;
   refundHref?: string;
 }
 
@@ -59,6 +60,7 @@ export function ReplacementResolutionCard({
   onDecline,
   onRefundInstead,
   onPrepareShipment,
+  onConfirmReceived,
   refundHref,
 }: ReplacementResolutionCardProps) {
   const current = resolution.current;
@@ -192,6 +194,17 @@ export function ReplacementResolutionCard({
             Prepare replacement shipment
           </Button>
         )}
+        {actions.has("CONFIRM_REPLACEMENT_RECEIVED") && (
+          <Button
+            onClick={onConfirmReceived}
+            loading={loadingAction === "CONFIRM_REPLACEMENT_RECEIVED"}
+            disabled={Boolean(loadingAction)}
+            fullWidth
+            className="sm:w-auto"
+          >
+            <Icon variant="icon-check" size={16} />I received the replacement
+          </Button>
+        )}
         {actions.has("ISSUE_REFUND") && refundHref && (
           <Link to={refundHref} className="sm:w-auto">
             <Button
@@ -241,6 +254,10 @@ function replacementDescription(
         ? "The replacement was delivered. Buyer confirmation is not available yet."
         : "The replacement was delivered."
       : "The replacement is in transit.";
+  if (current.status === "COMPLETED")
+    return role === "SELLER"
+      ? "The buyer confirmed receiving the replacement."
+      : "You confirmed that the replacement arrived. This request has been resolved.";
   return "This replacement proposal is no longer active.";
 }
 

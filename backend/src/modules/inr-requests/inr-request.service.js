@@ -121,7 +121,10 @@ const replacementActions = ({ request, replacement, shipment, viewerRole }) => {
   if (request.status !== 'OPEN') return [];
   const actions = [];
   if (!replacement) {
-    if (request.resolutionMode === 'NONE') actions.push('PROPOSE_REPLACEMENT');
+    if (request.resolutionMode === 'NONE') {
+      if (viewerRole === 'BUYER') actions.push('CLOSE_ORIGINAL_ITEM_ARRIVED');
+      actions.push('PROPOSE_REPLACEMENT');
+    }
     if (viewerRole === 'SELLER' && canIssueSellerRefund(request))
       actions.push('ISSUE_REFUND');
     return actions;
@@ -133,6 +136,7 @@ const replacementActions = ({ request, replacement, shipment, viewerRole }) => {
   }
   if (request.resolutionMode !== 'REPLACEMENT') return actions;
   if (replacement.status === 'PROPOSED') {
+    if (viewerRole === 'BUYER') actions.push('CLOSE_ORIGINAL_ITEM_ARRIVED');
     if (replacement.initiatorRole !== viewerRole) {
       actions.push('ACCEPT_REPLACEMENT');
       if (viewerRole === 'BUYER') actions.push('REFUND_INSTEAD');
@@ -145,14 +149,22 @@ const replacementActions = ({ request, replacement, shipment, viewerRole }) => {
     if (
       viewerRole === 'BUYER' &&
       (!shipment || shipment.status === 'READY_FOR_PICKUP')
-    )
+    ) {
+      actions.push('CLOSE_ORIGINAL_ITEM_ARRIVED');
       actions.push('REFUND_INSTEAD');
+    }
     if (viewerRole === 'SELLER') {
       if (!shipment) actions.push('PREPARE_REPLACEMENT_SHIPMENT');
       if (canIssueSellerRefund(request, replacement, shipment))
         actions.push('ISSUE_REFUND');
     }
   }
+  if (
+    replacement.status === 'FULFILLING' &&
+    viewerRole === 'BUYER' &&
+    shipment?.status === 'DELIVERED'
+  )
+    actions.push('CONFIRM_REPLACEMENT_RECEIVED');
   return actions;
 };
 
@@ -583,6 +595,15 @@ export const close = (buyerId, id, { now = new Date() } = {}) =>
     if (!existing) throw notFound();
     if (existing.status !== 'OPEN')
       throw invalidState('INR request is not open');
+    if (existing.resolutionMode === 'REFUND')
+      throw invalidState('Refund resolution is already active');
+    if (existing.resolutionMode === 'REPLACEMENT')
+      await replacementService.terminalizeForOriginalItemArrived({
+        request: existing,
+        userId: buyerId,
+        session,
+        now,
+      });
     const closed = await repository.closeOpenRequest(
       id,
       buyerId,

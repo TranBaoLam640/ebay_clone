@@ -18,6 +18,9 @@ import {
 } from './inr-request.constants.js';
 import * as repository from './inr-request.repository.js';
 
+const INR_OPEN_DELAY_MINUTES = 10;
+const INR_OPEN_DELAY_MS = INR_OPEN_DELAY_MINUTES * 60_000;
+
 const inrError = (status, code, message) => new AppError(status, code, message);
 
 const notFound = () =>
@@ -187,11 +190,12 @@ const validateEligibility = ({
       'Shipment is required before opening an INR request',
     );
   const eta = new Date(shipment.estimatedDeliveryAt);
-  if (Number.isNaN(eta.getTime()) || now <= eta)
+  const eligibleAt = new Date(eta.getTime() + INR_OPEN_DELAY_MS);
+  if (Number.isNaN(eta.getTime()) || now <= eligibleAt)
     throw inrError(
       409,
       ERROR_CODES.INR_NOT_ELIGIBLE,
-      'INR can only be opened after the estimated delivery date',
+      `INR can only be opened ${INR_OPEN_DELAY_MINUTES} minutes after the estimated delivery date`,
     );
   const windowEnd = new Date(eta.getTime() + env.INR_WINDOW_DAYS * 86_400_000);
   if (now > windowEnd)

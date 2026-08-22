@@ -15,6 +15,9 @@ import { formatDateTime } from '@/utils/format-date';
 import { useToast } from '@/contexts/toast-context';
 import { messageFromError } from '@/features/auth/utils/auth-errors';
 
+const INR_OPEN_DELAY_MINUTES = 10;
+const INR_OPEN_DELAY_MS = INR_OPEN_DELAY_MINUTES * 60_000;
+
 interface BuyerInrRequestModalProps {
   open: boolean;
   order: OrderDetail;
@@ -43,10 +46,11 @@ export function BuyerInrRequestModal({
     if (!order.shipment) return { eligible: false, message: 'Shipment details are not available yet.' };
     const eta = new Date(order.shipment.estimatedDeliveryAt);
     if (Number.isNaN(eta.getTime())) return { eligible: false, message: 'Estimated delivery date is unavailable.' };
-    if (Date.now() <= eta.getTime()) {
+    const eligibleAt = eta.getTime() + INR_OPEN_DELAY_MS;
+    if (Date.now() <= eligibleAt) {
       return {
         eligible: false,
-        message: `This item is still expected by ${formatDateTime(order.shipment.estimatedDeliveryAt)}.`,
+        message: `You can open this request ${INR_OPEN_DELAY_MINUTES} minutes after the estimated delivery time: ${formatDateTime(order.shipment.estimatedDeliveryAt)}.`,
       };
     }
     const windowEnd = eta.getTime() + 30 * 86_400_000;

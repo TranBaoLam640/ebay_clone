@@ -43,7 +43,7 @@ export function ContactSellerTopicsModal({
           <TopicButton
             icon="icon-package"
             title="I did not receive my item"
-            description="Start an item-not-received request after the estimated delivery date."
+            description="Start an item-not-received request 10 minutes after the estimated delivery time."
             onClick={onItemNotReceived}
           />
           <TopicButton

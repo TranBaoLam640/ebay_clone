@@ -4,6 +4,23 @@ export type InrStatus = "OPEN" | "CLOSED";
 export type InrResolution = "REFUND" | "WANT_ITEM";
 export type InrType = "ITEM_NOT_RECEIVED";
 export type InrCloseReason = "ITEM_ARRIVED" | "SELLER_REFUNDED";
+export type InrReplacementStatus =
+  | "PROPOSED"
+  | "ACCEPTED"
+  | "FULFILLING"
+  | "COMPLETED"
+  | "DECLINED"
+  | "CANCELLED"
+  | "FAILED";
+export type InrReplacementDisplayState =
+  InrReplacementStatus | "REFUND_REQUESTED";
+export type InrReplacementAction =
+  | "PROPOSE_REPLACEMENT"
+  | "ACCEPT_REPLACEMENT"
+  | "DECLINE_REPLACEMENT"
+  | "REFUND_INSTEAD"
+  | "PREPARE_REPLACEMENT_SHIPMENT"
+  | "ISSUE_REFUND";
 
 export interface InrItemSummary {
   id: string;
@@ -27,6 +44,38 @@ export interface InrSafeShipment {
 export interface InrSellerShipment extends InrSafeShipment {
   carrier: string;
   trackingNumber: string;
+}
+
+export interface InrReplacementShipment {
+  id: string;
+  status: "READY_FOR_PICKUP" | "IN_TRANSIT" | "DELIVERED" | "CANCELLED";
+  estimatedDeliveryAt: string | null;
+  pickedUpAt: string | null;
+  deliveredAt: string | null;
+  carrier?: string;
+  trackingNumber?: string;
+}
+
+export interface InrReplacementSummary {
+  id: string;
+  status: InrReplacementStatus;
+  displayState: InrReplacementDisplayState;
+  initiatorRole: "BUYER" | "SELLER";
+  quantity: number;
+  product: {
+    id: string;
+    title: string | null;
+    image: string | null;
+  };
+  shipment: InrReplacementShipment | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InrReplacementResolution {
+  current: InrReplacementSummary | null;
+  history: InrReplacementSummary[];
+  availableActions: InrReplacementAction[];
 }
 
 export interface InrTrackingEvidence {
@@ -53,6 +102,7 @@ export interface InrBuyerRequest {
   shipment: InrSafeShipment | null;
   conversationId: string;
   refundId: string | null;
+  replacementResolution: InrReplacementResolution;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;

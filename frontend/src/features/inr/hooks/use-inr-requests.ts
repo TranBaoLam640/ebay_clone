@@ -94,5 +94,28 @@ export function useInrActions() {
       }) => inrApi.refundRequest(requestId, idempotencyKey),
       onSuccess: invalidate,
     }),
+    proposeReplacement: useMutation({
+      mutationFn: (requestId: string) => inrApi.proposeReplacement(requestId),
+      onSuccess: invalidate,
+    }),
+    acceptReplacement: useMutation({
+      mutationFn: (replacementId: string) =>
+        inrApi.acceptReplacement(replacementId),
+      onSuccess: invalidate,
+    }),
+    declineReplacement: useMutation({
+      mutationFn: (replacementId: string) =>
+        inrApi.declineReplacement(replacementId),
+      onSuccess: invalidate,
+    }),
+    refundInstead: useMutation({
+      mutationFn: (requestId: string) => inrApi.refundInstead(requestId),
+      onSuccess: invalidate,
+    }),
+    prepareReplacementShipment: useMutation({
+      mutationFn: (replacementId: string) =>
+        inrApi.prepareReplacementShipment(replacementId),
+      onSuccess: invalidate,
+    }),
   };
 }

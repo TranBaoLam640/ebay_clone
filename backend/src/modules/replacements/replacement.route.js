@@ -16,3 +16,8 @@ replacementRoute.post(
   validate(replacementIdSchema),
   controller.decline,
 );
+replacementRoute.post(
+  '/:replacementId/shipment',
+  validate(replacementIdSchema),
+  controller.prepareShipment,
+);

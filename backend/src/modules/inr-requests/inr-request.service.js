@@ -10,6 +10,7 @@ import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
 import * as paymentRepository from '../payments/payment.repository.js';
 import * as refundService from '../payments/refunds/refund.service.js';
+import * as replacementRepository from '../replacements/replacement.repository.js';
 import * as replacementService from '../replacements/replacement.service.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
 import * as shipmentRepository from '../shipments/shipment.repository.js';
@@ -74,26 +75,193 @@ const itemSummary = (item) => ({
 const latestEvidence = (request) =>
   request.trackingEvidenceHistory?.at(-1) ?? null;
 
-const buyerDto = ({ request, orderItem, shipment }) => ({
-  id: String(request._id),
-  type: INR_ISSUE_TYPE,
-  orderId: String(request.orderId),
-  orderItemId: String(request.orderItemId),
-  item: orderItem ? itemSummary(orderItem) : null,
-  quantityMissing: request.quantityMissing,
-  requestedResolution: request.requestedResolution,
-  details: request.details ?? null,
-  status: request.status,
-  requestAmount: request.requestAmount,
-  currency: request.currency,
-  shipment: safeShipment(shipment),
-  conversationId: String(request.conversationId),
-  refundId: request.refundId ? String(request.refundId) : null,
-  createdAt: request.createdAt,
-  updatedAt: request.updatedAt,
-  closedAt: request.closedAt ?? null,
-  closeReason: request.closeReason ?? null,
+const safeReplacementShipment = (shipment) =>
+  shipment
+    ? {
+        id: String(shipment._id),
+        status: shipment.status,
+        estimatedDeliveryAt: shipment.estimatedDeliveryAt ?? null,
+        pickedUpAt: shipment.pickedUpAt ?? null,
+        deliveredAt: shipment.deliveredAt ?? null,
+      }
+    : null;
+
+const fullReplacementShipment = (shipment) =>
+  shipment
+    ? {
+        ...safeReplacementShipment(shipment),
+        carrier: shipment.carrier,
+        trackingNumber: shipment.trackingNumber,
+      }
+    : null;
+
+const replacementDisplayState = (request, replacement) => {
+  if (
+    request.resolutionMode === 'REFUND' &&
+    ['DECLINED', 'CANCELLED'].includes(replacement.status) &&
+    (replacement.decline?.reason === 'REFUND_INSTEAD' ||
+      replacement.cancellation?.reason === 'REFUND_INSTEAD')
+  )
+    return 'REFUND_REQUESTED';
+  return replacement.status;
+};
+
+const canIssueSellerRefund = (request, replacement, shipment) => {
+  if (request.status !== 'OPEN') return false;
+  if (request.resolutionMode === 'NONE') return true;
+  if (request.resolutionMode === 'REFUND') return true;
+  if (request.resolutionMode !== 'REPLACEMENT' || !replacement) return false;
+  if (replacement.status === 'FULFILLING') return false;
+  if (replacement.status === 'ACCEPTED')
+    return !shipment || shipment.status === 'READY_FOR_PICKUP';
+  return replacement.status === 'PROPOSED';
+};
+
+const replacementActions = ({ request, replacement, shipment, viewerRole }) => {
+  if (request.status !== 'OPEN') return [];
+  const actions = [];
+  if (!replacement) {
+    if (request.resolutionMode === 'NONE') actions.push('PROPOSE_REPLACEMENT');
+    if (viewerRole === 'SELLER' && canIssueSellerRefund(request))
+      actions.push('ISSUE_REFUND');
+    return actions;
+  }
+  if (request.resolutionMode === 'REFUND') {
+    if (viewerRole === 'SELLER' && canIssueSellerRefund(request))
+      actions.push('ISSUE_REFUND');
+    return actions;
+  }
+  if (request.resolutionMode !== 'REPLACEMENT') return actions;
+  if (replacement.status === 'PROPOSED') {
+    if (replacement.initiatorRole !== viewerRole) {
+      actions.push('ACCEPT_REPLACEMENT');
+      if (viewerRole === 'BUYER') actions.push('REFUND_INSTEAD');
+      if (viewerRole === 'SELLER') actions.push('DECLINE_REPLACEMENT');
+    }
+    if (viewerRole === 'SELLER' && canIssueSellerRefund(request, replacement))
+      actions.push('ISSUE_REFUND');
+  }
+  if (replacement.status === 'ACCEPTED') {
+    if (
+      viewerRole === 'BUYER' &&
+      (!shipment || shipment.status === 'READY_FOR_PICKUP')
+    )
+      actions.push('REFUND_INSTEAD');
+    if (viewerRole === 'SELLER') {
+      if (!shipment) actions.push('PREPARE_REPLACEMENT_SHIPMENT');
+      if (canIssueSellerRefund(request, replacement, shipment))
+        actions.push('ISSUE_REFUND');
+    }
+  }
+  return actions;
+};
+
+const replacementItem = ({
+  request,
+  orderItem,
+  replacement,
+  shipment,
+  viewerRole,
+}) => ({
+  id: String(replacement._id),
+  status: replacement.status,
+  displayState: replacementDisplayState(request, replacement),
+  initiatorRole: replacement.initiatorRole,
+  quantity: replacement.quantity,
+  product: {
+    id: orderItem?.productId
+      ? String(orderItem.productId)
+      : String(request.productId),
+    title: orderItem?.title ?? null,
+    image: orderItem?.image ?? null,
+  },
+  shipment:
+    viewerRole === 'SELLER'
+      ? fullReplacementShipment(shipment)
+      : safeReplacementShipment(shipment),
+  createdAt: replacement.createdAt,
+  updatedAt: replacement.updatedAt,
 });
+
+const replacementResolutionDto = ({
+  request,
+  orderItem,
+  replacements = [],
+  replacementShipments = [],
+  viewerRole,
+}) => {
+  const shipmentByReplacement = new Map(
+    replacementShipments
+      .filter(Boolean)
+      .map((shipment) => [String(shipment.replacementId), shipment]),
+  );
+  const active = replacements.find((replacement) =>
+    ['PROPOSED', 'ACCEPTED', 'FULFILLING'].includes(replacement.status),
+  );
+  const current = active ?? replacements[0] ?? null;
+  const currentShipment = current
+    ? shipmentByReplacement.get(String(current._id))
+    : null;
+  return {
+    current: current
+      ? replacementItem({
+          request,
+          orderItem,
+          replacement: current,
+          shipment: currentShipment,
+          viewerRole,
+        })
+      : null,
+    history: replacements
+      .filter(
+        (replacement) =>
+          !current || String(replacement._id) !== String(current._id),
+      )
+      .map((replacement) =>
+        replacementItem({
+          request,
+          orderItem,
+          replacement,
+          shipment: shipmentByReplacement.get(String(replacement._id)),
+          viewerRole,
+        }),
+      ),
+    availableActions: replacementActions({
+      request,
+      replacement: current,
+      shipment: currentShipment,
+      viewerRole,
+    }),
+  };
+};
+
+const buyerDto = (context) => {
+  const { request, orderItem, shipment } = context;
+  return {
+    id: String(request._id),
+    type: INR_ISSUE_TYPE,
+    orderId: String(request.orderId),
+    orderItemId: String(request.orderItemId),
+    item: orderItem ? itemSummary(orderItem) : null,
+    quantityMissing: request.quantityMissing,
+    requestedResolution: request.requestedResolution,
+    details: request.details ?? null,
+    status: request.status,
+    requestAmount: request.requestAmount,
+    currency: request.currency,
+    shipment: safeShipment(shipment),
+    conversationId: String(request.conversationId),
+    refundId: request.refundId ? String(request.refundId) : null,
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt,
+    closedAt: request.closedAt ?? null,
+    closeReason: request.closeReason ?? null,
+    replacementResolution: replacementResolutionDto({
+      ...context,
+      viewerRole: 'BUYER',
+    }),
+  };
+};
 
 const refundDto = (refund) =>
   refund
@@ -109,39 +277,46 @@ const refundDto = (refund) =>
       }
     : null;
 
-const sellerDto = ({ request, orderItem, shipment, buyer, refund }) => ({
-  id: String(request._id),
-  type: INR_ISSUE_TYPE,
-  orderId: String(request.orderId),
-  orderItemId: String(request.orderItemId),
-  item: orderItem ? itemSummary(orderItem) : null,
-  buyer: buyer
-    ? {
-        id: String(buyer._id),
-        displayName: buyer.fullName ?? buyer.email ?? 'Buyer',
-        avatarUrl: buyer.avatarUrl ?? null,
-      }
-    : null,
-  quantityMissing: request.quantityMissing,
-  requestedResolution: request.requestedResolution,
-  details: request.details ?? null,
-  status: request.status,
-  requestAmount: request.requestAmount,
-  currency: request.currency,
-  shipment: fullShipment(shipment),
-  latestTrackingEvidence: latestEvidence(request),
-  trackingEvidenceHistory: request.trackingEvidenceHistory ?? [],
-  conversationId: String(request.conversationId),
-  refundId: request.refundId ? String(request.refundId) : null,
-  refund: refundDto(refund),
-  createdAt: request.createdAt,
-  updatedAt: request.updatedAt,
-  closedAt: request.closedAt ?? null,
-  closeReason: request.closeReason ?? null,
-});
+const sellerDto = (context) => {
+  const { request, orderItem, shipment, buyer, refund } = context;
+  return {
+    id: String(request._id),
+    type: INR_ISSUE_TYPE,
+    orderId: String(request.orderId),
+    orderItemId: String(request.orderItemId),
+    item: orderItem ? itemSummary(orderItem) : null,
+    buyer: buyer
+      ? {
+          id: String(buyer._id),
+          displayName: buyer.fullName ?? buyer.email ?? 'Buyer',
+          avatarUrl: buyer.avatarUrl ?? null,
+        }
+      : null,
+    quantityMissing: request.quantityMissing,
+    requestedResolution: request.requestedResolution,
+    details: request.details ?? null,
+    status: request.status,
+    requestAmount: request.requestAmount,
+    currency: request.currency,
+    shipment: fullShipment(shipment),
+    latestTrackingEvidence: latestEvidence(request),
+    trackingEvidenceHistory: request.trackingEvidenceHistory ?? [],
+    conversationId: String(request.conversationId),
+    refundId: request.refundId ? String(request.refundId) : null,
+    refund: refundDto(refund),
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt,
+    closedAt: request.closedAt ?? null,
+    closeReason: request.closeReason ?? null,
+    replacementResolution: replacementResolutionDto({
+      ...context,
+      viewerRole: 'SELLER',
+    }),
+  };
+};
 
 const loadContext = async (request, session) => {
-  const [order, shipment, buyer, refund] = await Promise.all([
+  const [order, shipment, buyer, refund, replacements] = await Promise.all([
     orderRepository.findOrderItem({
       orderId: request.orderId,
       orderItemId: request.orderItemId,
@@ -155,13 +330,21 @@ const loadContext = async (request, session) => {
     request.refundId
       ? refundService.findById(request.refundId, session)
       : Promise.resolve(null),
+    replacementRepository.listByInrRequest(request._id, session),
   ]);
+  const replacementShipments = await Promise.all(
+    replacements.map((replacement) =>
+      shipmentRepository.findByReplacementId(replacement._id, session),
+    ),
+  );
   return {
     request,
     orderItem: order?.items?.[0] ?? null,
     shipment,
     buyer,
     refund,
+    replacements,
+    replacementShipments,
   };
 };
 

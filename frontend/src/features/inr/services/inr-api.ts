@@ -6,6 +6,7 @@ import type {
   InrListQuery,
   InrPage,
   InrRefundPreview,
+  InrReplacementShipment,
   InrSellerRequest,
   InrTrackingEvidenceInput,
 } from "../types/inr.types";
@@ -52,4 +53,25 @@ export const inrApi = {
       {},
       { "Idempotency-Key": idempotencyKey },
     ),
+
+  proposeReplacement: (requestId: string) =>
+    apiMutate("post", `/inr-requests/${requestId}/replacements`),
+
+  acceptReplacement: (replacementId: string) =>
+    apiMutate("post", `/replacements/${replacementId}/accept`),
+
+  declineReplacement: (replacementId: string) =>
+    apiMutate("post", `/replacements/${replacementId}/decline`),
+
+  refundInstead: (requestId: string) =>
+    apiMutate<InrBuyerRequest>(
+      "patch",
+      `/inr-requests/${requestId}/refund-instead`,
+    ),
+
+  prepareReplacementShipment: (replacementId: string) =>
+    apiMutate<{
+      replacementId: string;
+      shipment: InrReplacementShipment;
+    }>("post", `/replacements/${replacementId}/shipment`),
 };

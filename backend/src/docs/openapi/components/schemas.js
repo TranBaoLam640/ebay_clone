@@ -1650,6 +1650,133 @@ export const schemas = {
       updatedAt: timestamp,
     },
   },
+  INRReplacementResolution: {
+    type: 'object',
+    required: ['current', 'history', 'availableActions'],
+    properties: {
+      current: {
+        allOf: [{ $ref: '#/components/schemas/INRReplacementSummary' }],
+        nullable: true,
+      },
+      history: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/INRReplacementSummary' },
+      },
+      availableActions: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: [
+            'PROPOSE_REPLACEMENT',
+            'ACCEPT_REPLACEMENT',
+            'DECLINE_REPLACEMENT',
+            'REFUND_INSTEAD',
+            'PREPARE_REPLACEMENT_SHIPMENT',
+            'ISSUE_REFUND',
+          ],
+        },
+      },
+    },
+  },
+  INRReplacementSummary: {
+    type: 'object',
+    required: [
+      'id',
+      'status',
+      'displayState',
+      'initiatorRole',
+      'quantity',
+      'product',
+      'shipment',
+      'createdAt',
+      'updatedAt',
+    ],
+    properties: {
+      id: objectId,
+      status: {
+        type: 'string',
+        enum: [
+          'PROPOSED',
+          'ACCEPTED',
+          'FULFILLING',
+          'COMPLETED',
+          'DECLINED',
+          'CANCELLED',
+          'FAILED',
+        ],
+      },
+      displayState: {
+        type: 'string',
+        enum: [
+          'PROPOSED',
+          'ACCEPTED',
+          'FULFILLING',
+          'COMPLETED',
+          'DECLINED',
+          'CANCELLED',
+          'FAILED',
+          'REFUND_REQUESTED',
+        ],
+      },
+      initiatorRole: { type: 'string', enum: ['BUYER', 'SELLER'] },
+      quantity: { type: 'integer', minimum: 1 },
+      product: {
+        type: 'object',
+        required: ['id', 'title', 'image'],
+        properties: {
+          id: objectId,
+          title: { type: 'string', nullable: true },
+          image: { type: 'string', nullable: true },
+        },
+      },
+      shipment: {
+        type: 'object',
+        nullable: true,
+        description:
+          'Buyer views omit carrier and trackingNumber. Seller views include operational carrier and trackingNumber for replacement fulfillment.',
+        properties: {
+          id: objectId,
+          carrier: { type: 'string' },
+          trackingNumber: { type: 'string' },
+          status: {
+            type: 'string',
+            enum: ['READY_FOR_PICKUP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'],
+          },
+          estimatedDeliveryAt: nullableTimestamp,
+          pickedUpAt: nullableTimestamp,
+          deliveredAt: nullableTimestamp,
+        },
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  },
+  PrepareReplacementShipmentResponse: {
+    type: 'object',
+    required: ['replacementId', 'shipment'],
+    properties: {
+      replacementId: objectId,
+      shipment: {
+        type: 'object',
+        required: [
+          'id',
+          'carrier',
+          'trackingNumber',
+          'status',
+          'estimatedDeliveryAt',
+        ],
+        properties: {
+          id: objectId,
+          carrier: { type: 'string' },
+          trackingNumber: { type: 'string' },
+          status: { type: 'string', enum: ['READY_FOR_PICKUP'] },
+          estimatedDeliveryAt: timestamp,
+          pickedUpAt: nullableTimestamp,
+          deliveredAt: nullableTimestamp,
+        },
+      },
+    },
+  },
   CreateConversationRequest: {
     type: 'object',
     additionalProperties: false,
@@ -1826,6 +1953,9 @@ export const schemas = {
       currency: { type: 'string', enum: ['VND'] },
       conversationId: objectId,
       refundId: { ...objectId, nullable: true },
+      replacementResolution: {
+        $ref: '#/components/schemas/INRReplacementResolution',
+      },
       shipment: {
         type: 'object',
         nullable: true,

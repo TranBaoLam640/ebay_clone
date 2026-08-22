@@ -124,3 +124,23 @@ export const decline = async (userId, replacementId) => {
   await emitReplacementUpdate(replacement.id);
   return replacementForUser(userId, replacement.id);
 };
+
+export const prepareShipment = async (userId, replacementId) => {
+  const result = await replacementService.prepareShipment(
+    userId,
+    replacementId,
+  );
+  await emitReplacementUpdate(result.replacement.id);
+  return {
+    replacementId: result.replacement.id,
+    shipment: {
+      id: String(result.shipment._id),
+      carrier: result.shipment.carrier,
+      trackingNumber: result.shipment.trackingNumber,
+      status: result.shipment.status,
+      estimatedDeliveryAt: result.shipment.estimatedDeliveryAt,
+      pickedUpAt: result.shipment.pickedUpAt ?? null,
+      deliveredAt: result.shipment.deliveredAt ?? null,
+    },
+  };
+};

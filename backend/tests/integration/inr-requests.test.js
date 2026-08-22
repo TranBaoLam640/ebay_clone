@@ -563,6 +563,144 @@ describe('INR requests', () => {
     ).expect(409);
   });
 
+  it('exposes safe replacement detail views and seller replacement shipment preparation', async () => {
+    const buyer = await login();
+    const seller = await login('seller@example.test');
+    const otherSeller = await login('seller2@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      '/inr-requests',
+      createBody({ requestedResolution: 'WANT_ITEM', quantityMissing: 2 }),
+    ).expect(201);
+    const requestId = created.body.data.id;
+    const proposal = await proposeReplacement(ids.sellerUser, requestId);
+
+    const buyerProposalDetail = await buyer
+      .get(`${prefix}/inr-requests/${requestId}`)
+      .expect(200);
+    expect(buyerProposalDetail.body.data.replacementResolution).toEqual(
+      expect.objectContaining({
+        availableActions: ['ACCEPT_REPLACEMENT', 'REFUND_INSTEAD'],
+        current: expect.objectContaining({
+          id: proposal.id,
+          status: 'PROPOSED',
+          initiatorRole: 'SELLER',
+          quantity: 2,
+          shipment: null,
+          product: expect.objectContaining({
+            id: String(ids.product),
+            title: 'Camera',
+            image: 'https://example.test/camera.jpg',
+          }),
+        }),
+      }),
+    );
+    expect(
+      buyerProposalDetail.body.data.replacementResolution.current,
+    ).not.toHaveProperty('inventoryClaimStatus');
+
+    const sellerProposalDetail = await seller
+      .get(`${prefix}/inr-requests/${requestId}`)
+      .expect(200);
+    expect(
+      sellerProposalDetail.body.data.replacementResolution.availableActions,
+    ).toEqual(['ISSUE_REFUND']);
+
+    await mutate(
+      buyer,
+      'post',
+      `/replacements/${proposal.id}/shipment`,
+      {},
+    ).expect(403);
+    await mutate(
+      otherSeller,
+      'post',
+      `/replacements/${proposal.id}/shipment`,
+      {},
+    ).expect(403);
+
+    const accepted = await acceptReplacement(ids.buyer, proposal.id);
+    const sellerAcceptedDetail = await seller
+      .get(`${prefix}/inr-requests/${requestId}`)
+      .expect(200);
+    expect(
+      sellerAcceptedDetail.body.data.replacementResolution.availableActions,
+    ).toEqual(['PREPARE_REPLACEMENT_SHIPMENT', 'ISSUE_REFUND']);
+
+    const prepared = await mutate(
+      seller,
+      'post',
+      `/replacements/${accepted.id}/shipment`,
+      {},
+    ).expect(201);
+    expect(prepared.body.data).toEqual(
+      expect.objectContaining({
+        replacementId: accepted.id,
+        shipment: expect.objectContaining({
+          status: 'READY_FOR_PICKUP',
+          carrier: 'SBay Express',
+          trackingNumber: expect.any(String),
+        }),
+      }),
+    );
+    const storedShipment = await replacementShipment(accepted.id);
+    expect(storedShipment).toEqual(
+      expect.objectContaining({
+        replacementId: new mongoose.Types.ObjectId(accepted.id),
+        purpose: 'REPLACEMENT',
+        status: 'READY_FOR_PICKUP',
+      }),
+    );
+
+    const buyerReadyDetail = await buyer
+      .get(`${prefix}/inr-requests/${requestId}`)
+      .expect(200);
+    expect(
+      buyerReadyDetail.body.data.replacementResolution.current.shipment,
+    ).toEqual(
+      expect.objectContaining({
+        status: 'READY_FOR_PICKUP',
+      }),
+    );
+    expect(
+      buyerReadyDetail.body.data.replacementResolution.current.shipment,
+    ).not.toHaveProperty('trackingNumber');
+
+    const sellerReadyDetail = await seller
+      .get(`${prefix}/inr-requests/${requestId}`)
+      .expect(200);
+    expect(
+      sellerReadyDetail.body.data.replacementResolution.current.shipment,
+    ).toEqual(
+      expect.objectContaining({
+        status: 'READY_FOR_PICKUP',
+        trackingNumber: storedShipment.trackingNumber,
+      }),
+    );
+
+    await mutate(
+      seller,
+      'post',
+      `/replacements/${accepted.id}/shipment`,
+      {},
+    ).expect(409);
+
+    await shipmentService.pickup(ids.shipper, storedShipment._id);
+    const sellerTransitDetail = await seller
+      .get(`${prefix}/inr-requests/${requestId}`)
+      .expect(200);
+    expect(sellerTransitDetail.body.data.replacementResolution.current).toEqual(
+      expect.objectContaining({
+        status: 'FULFILLING',
+        shipment: expect.objectContaining({ status: 'IN_TRANSIT' }),
+      }),
+    );
+    expect(
+      sellerTransitDetail.body.data.replacementResolution.availableActions,
+    ).toEqual([]);
+  });
+
   it('previews seller refund with server-derived amount and rejects non-owners or closed requests', async () => {
     const buyer = await login();
     const seller = await login('seller@example.test');

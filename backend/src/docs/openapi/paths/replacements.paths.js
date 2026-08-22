@@ -35,4 +35,21 @@ export const replacementPaths = {
       security: security.unsafe,
     }),
   },
+  '/replacements/{replacementId}/shipment': {
+    post: operation({
+      tag: 'INR Requests',
+      operationId: 'prepareReplacementShipment',
+      summary: 'Prepare a shipment for an accepted INR replacement',
+      description:
+        'Owning seller-only action. Delegates to ReplacementService.prepareShipment for authorization, replacement resolution validation, duplicate shipment protection, and replacement shipment creation.',
+      parameters: [replacementId],
+      success: response(
+        'Prepared replacement shipment',
+        ref('PrepareReplacementShipmentResponse'),
+      ),
+      successStatus: 201,
+      errors: [400, 401, 403, 404, 409, 429, 500],
+      security: security.unsafe,
+    }),
+  },
 };

@@ -28,3 +28,18 @@ export const decline = async (req, res, next) => {
     next(error);
   }
 };
+
+export const prepareShipment = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await replacementChatService.prepareShipment(
+        req.user.id,
+        req.validated.params.replacementId,
+      ),
+      201,
+    );
+  } catch (error) {
+    next(error);
+  }
+};

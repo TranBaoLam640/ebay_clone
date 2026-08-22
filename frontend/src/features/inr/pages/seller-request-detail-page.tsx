@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Badge } from "@/components/badge";
 import { Button } from "@/components/button";
 import { EmptyState } from "@/components/empty-state";
@@ -11,12 +11,17 @@ import { ProductImage } from "@/components/product-image";
 import { Select } from "@/components/select";
 import { Skeleton } from "@/components/skeleton";
 import { ShipmentTrackingCard } from "@/features/shipping/components/shipment-tracking-card";
+import { ReplacementResolutionCard } from "../components/replacement-resolution-card";
 import {
   useCarriers,
   useInrActions,
   useInrRequest,
 } from "../hooks/use-inr-requests";
-import type { InrSellerRequest } from "../types/inr.types";
+import { useInrReplacementRealtime } from "../hooks/use-inr-replacement-realtime";
+import type {
+  InrReplacementAction,
+  InrSellerRequest,
+} from "../types/inr.types";
 import {
   inrResolutionLabel,
   inrStatusLabel,
@@ -31,11 +36,26 @@ export default function SellerRequestDetailPage() {
   const { requestId } = useParams();
   const { notify } = useToast();
   const request = useInrRequest(requestId);
+  const { refetch } = request;
   const carriers = useCarriers();
-  const { updateTrackingEvidence } = useInrActions();
+  const {
+    updateTrackingEvidence,
+    proposeReplacement,
+    acceptReplacement,
+    declineReplacement,
+    refundInstead,
+    prepareReplacementShipment,
+  } = useInrActions();
   const [trackingOpen, setTrackingOpen] = useState(false);
   const [carrierId, setCarrierId] = useState("");
   const [trackingId, setTrackingId] = useState("");
+  const [loadingAction, setLoadingAction] =
+    useState<InrReplacementAction | null>(null);
+  const refreshRequest = useCallback(() => {
+    refetch();
+  }, [refetch]);
+
+  useInrReplacementRealtime(request.data?.conversationId, refreshRequest);
 
   if (request.isLoading) {
     return (
@@ -91,11 +111,31 @@ export default function SellerRequestDetailPage() {
     }
   };
 
+  const runReplacementAction = async (
+    action: InrReplacementAction,
+    task: () => Promise<unknown>,
+    successMessage: string,
+  ) => {
+    try {
+      setLoadingAction(action);
+      await task();
+      notify(successMessage, "success");
+    } catch (err) {
+      notify(messageFromError(err), "error");
+    } finally {
+      setLoadingAction(null);
+      request.refetch();
+    }
+  };
+
   const carrierOptions = (carriers.data ?? []).map((c) => ({
     value: c.id,
     label: `${c.name} (${c.code})`,
   }));
   const canSubmitTracking = Boolean(carrierId && trackingId.trim());
+  const replacementId = r.replacementResolution.current?.id;
+  const canRefund =
+    r.replacementResolution.availableActions.includes("ISSUE_REFUND");
 
   return (
     <div className="flex flex-col gap-6">
@@ -175,6 +215,52 @@ export default function SellerRequestDetailPage() {
 
       <ShipmentTrackingCard shipment={shipment} title="Canonical shipment" />
 
+      <ReplacementResolutionCard
+        role="SELLER"
+        resolution={r.replacementResolution}
+        messagePath={paths.message(r.conversationId)}
+        refundHref={paths.account.requestDisputeRefund(r.id)}
+        loadingAction={loadingAction}
+        onPropose={() =>
+          runReplacementAction(
+            "PROPOSE_REPLACEMENT",
+            () => proposeReplacement.mutateAsync(r.id),
+            "Replacement offered.",
+          )
+        }
+        onAccept={() =>
+          replacementId &&
+          runReplacementAction(
+            "ACCEPT_REPLACEMENT",
+            () => acceptReplacement.mutateAsync(replacementId),
+            "Replacement accepted.",
+          )
+        }
+        onDecline={() =>
+          replacementId &&
+          runReplacementAction(
+            "DECLINE_REPLACEMENT",
+            () => declineReplacement.mutateAsync(replacementId),
+            "Replacement declined.",
+          )
+        }
+        onRefundInstead={() =>
+          runReplacementAction(
+            "REFUND_INSTEAD",
+            () => refundInstead.mutateAsync(r.id),
+            "Refund requested instead.",
+          )
+        }
+        onPrepareShipment={() =>
+          replacementId &&
+          runReplacementAction(
+            "PREPARE_REPLACEMENT_SHIPMENT",
+            () => prepareReplacementShipment.mutateAsync(replacementId),
+            "Replacement shipment prepared.",
+          )
+        }
+      />
+
       <section className="rounded-xl border border-border bg-surface p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -232,7 +318,7 @@ export default function SellerRequestDetailPage() {
               Send buyer a message
             </Button>
           </Link>
-          {r.status === "OPEN" ? (
+          {canRefund ? (
             <Link to={paths.account.requestDisputeRefund(r.id)}>
               <Button variant="secondary" fullWidth className="sm:w-auto">
                 Refund buyer

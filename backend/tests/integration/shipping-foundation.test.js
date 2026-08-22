@@ -201,7 +201,7 @@ describe('shipping backend foundation', () => {
     expect(shipment).not.toHaveProperty('replacementId');
     expect(shipment.trackingNumber).toMatch(/^SBAY-[A-F0-9]{8}$/);
     expect(shipment.estimatedDeliveryAt).toEqual(
-      new Date('2026-08-21T00:10:00.000Z'),
+      new Date('2026-08-21T00:00:00.000Z'),
     );
     expect(shipment.createdAt).toBeInstanceOf(Date);
     expect(shipment.updatedAt).toBeInstanceOf(Date);

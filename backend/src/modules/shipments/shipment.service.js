@@ -17,7 +17,7 @@ export const generateTrackingNumber = () =>
   `${TRACKING_PREFIX}-${randomBytes(4).toString('hex').toUpperCase()}`;
 
 export const estimatedDeliveryAt = (createdAt = new Date()) =>
-  new Date(createdAt.getTime() + env.SHIPMENT_ETA_DAYS * 86_400_000);
+  new Date(createdAt.getTime() + env.SHIPMENT_ETA_MINUTES * 60_000);
 
 const isDuplicateTracking = (error) =>
   error?.code === 11000 &&

@@ -171,7 +171,7 @@ Auth/cookies: `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`, `COOKIE_SECURE`
 
 Email: `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SECURE`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`, `EMAIL_VERIFICATION_URL`, `EMAIL_OTP_TTL_MINUTES`, `EMAIL_OTP_MAX_ATTEMPTS`, `EMAIL_OTP_RESEND_COOLDOWN_SECONDS`, and `EMAIL_OTP_HMAC_SECRET`. SMTP is optional in development. Registration and resend send a six-digit OTP; verification accepts `{ "email": "...", "otp": "......" }`. Raw OTPs are never stored or returned, only HMAC-protected hashes are persisted, OTPs expire, max attempts and resend cooldown are enforced, and only the newest OTP is valid.
 
-User4: `RETURN_WINDOW_DAYS` is a positive integer (default `30`); `SHIPMENT_ETA_DAYS` is a positive integer (default `3`) for the internal Shipment foundation ETA; `PAYPAL_SIMULATION_ENABLED` is `true|false` (default `true`) and gates the simulation provider actions. The complete authoritative inventory is `.env.example` and `src/config/env.js`.
+User4: `RETURN_WINDOW_DAYS` is a positive integer (default `30`); `SHIPMENT_ETA_MINUTES` is a positive integer (default `10`) for the internal Shipment foundation ETA; `PAYPAL_SIMULATION_ENABLED` is `true|false` (default `true`) and gates the simulation provider actions. The complete authoritative inventory is `.env.example` and `src/config/env.js`.
 
 ## Database Connection
 

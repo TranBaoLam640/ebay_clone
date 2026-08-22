@@ -72,7 +72,7 @@ const schema = z
     LOG_LEVEL: z.string().default('info'),
     RETURN_WINDOW_DAYS: positiveInteger(30),
     INR_WINDOW_DAYS: positiveInteger(30),
-    SHIPMENT_ETA_DAYS: positiveInteger(3),
+    SHIPMENT_ETA_MINUTES: positiveInteger(10),
     // How often the in-process sweep closes ended auctions. Multi-replica-safe:
     // only one pod's atomic OPEN→CLOSED claim wins per auction.
     AUCTION_SWEEP_INTERVAL_MS: positiveInteger(15000),

@@ -700,12 +700,27 @@ describe('INR requests', () => {
       }),
     );
 
-    await mutate(
+    const retriedPrepare = await mutate(
       seller,
       'post',
       `/replacements/${accepted.id}/shipment`,
       {},
-    ).expect(409);
+    ).expect(201);
+    expect(retriedPrepare.body.data).toEqual(
+      expect.objectContaining({
+        replacementId: accepted.id,
+        shipment: expect.objectContaining({
+          status: 'READY_FOR_PICKUP',
+          trackingNumber: storedShipment.trackingNumber,
+        }),
+      }),
+    );
+    expect(
+      await models.Shipment.countDocuments({
+        replacementId: accepted.id,
+        purpose: 'REPLACEMENT',
+      }),
+    ).toBe(1);
 
     await shipmentService.pickup(ids.shipper, storedShipment._id);
     const sellerTransitDetail = await seller

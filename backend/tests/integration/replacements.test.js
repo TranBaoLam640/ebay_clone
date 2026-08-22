@@ -985,10 +985,26 @@ describe('replacement domain foundation', () => {
       service.prepareShipment(ids.sellerUser, accepted.id),
     ]);
 
-    expect(results.map((result) => result.status).sort()).toEqual([
+    expect(results.map((result) => result.status)).toEqual([
       'fulfilled',
-      'rejected',
+      'fulfilled',
     ]);
+    expect(
+      results.map((result) =>
+        result.status === 'fulfilled'
+          ? String(result.value.shipment._id)
+          : 'rejected',
+      ),
+    ).toEqual([expect.any(String), expect.any(String)]);
+    expect(
+      new Set(
+        results.map((result) =>
+          result.status === 'fulfilled'
+            ? String(result.value.shipment._id)
+            : 'rejected',
+        ),
+      ).size,
+    ).toBe(1);
     expect(
       await models.Shipment.countDocuments({
         replacementId: accepted.id,

@@ -565,6 +565,16 @@ export const prepareShipment = (userId, id, { now = new Date() } = {}) =>
     assertSellerOwnsReplacement(replacement, role);
     await ensureReplacementMode(replacement, session);
 
+    const existingShipment = await shipmentRepository.findByReplacementId(
+      replacement._id,
+      session,
+    );
+    if (existingShipment)
+      return {
+        replacement: view(replacement),
+        shipment: shipmentRepository.toPublic(existingShipment),
+      };
+
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         const shipment = await shipmentRepository.create(
@@ -587,8 +597,18 @@ export const prepareShipment = (userId, id, { now = new Date() } = {}) =>
           shipment: shipmentRepository.toPublic(shipment),
         };
       } catch (error) {
-        if (duplicateReplacementShipment(error))
+        if (duplicateReplacementShipment(error)) {
+          const shipment = await shipmentRepository.findByReplacementId(
+            replacement._id,
+            session,
+          );
+          if (shipment)
+            return {
+              replacement: view(replacement),
+              shipment: shipmentRepository.toPublic(shipment),
+            };
           throw invalidState('Replacement shipment already exists');
+        }
         if (duplicateTracking(error) && attempt < 2) continue;
         throw error;
       }

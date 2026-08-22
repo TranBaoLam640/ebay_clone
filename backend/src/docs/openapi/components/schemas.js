@@ -1348,6 +1348,31 @@ export const schemas = {
     required: ['checkoutGroupId'],
     properties: { checkoutGroupId: objectId },
   },
+  Refund: {
+    type: 'object',
+    required: [
+      'id',
+      'amount',
+      'currency',
+      'method',
+      'status',
+      'createdAt',
+      'updatedAt',
+    ],
+    properties: {
+      id: objectId,
+      amount: { type: 'integer', minimum: 0 },
+      currency: { type: 'string', enum: ['VND'] },
+      method: { type: 'string', enum: ['COD', 'PAYPAL'] },
+      status: {
+        type: 'string',
+        enum: ['PROCESSING', 'COMPLETED', 'FAILED'],
+      },
+      completedAt: nullableTimestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  },
   MessageAttachment: {
     type: 'object',
     additionalProperties: false,
@@ -1718,6 +1743,7 @@ export const schemas = {
       requestAmount: { type: 'integer', minimum: 0 },
       currency: { type: 'string', enum: ['VND'] },
       conversationId: objectId,
+      refundId: { ...objectId, nullable: true },
       shipment: {
         type: 'object',
         nullable: true,
@@ -1727,7 +1753,46 @@ export const schemas = {
       createdAt: timestamp,
       updatedAt: timestamp,
       closedAt: nullableTimestamp,
-      closeReason: { type: 'string', nullable: true, enum: ['ITEM_ARRIVED'] },
+      closeReason: {
+        type: 'string',
+        nullable: true,
+        enum: ['ITEM_ARRIVED', 'SELLER_REFUNDED'],
+      },
+    },
+  },
+  INRRefundPreview: {
+    type: 'object',
+    properties: {
+      requestId: objectId,
+      orderId: objectId,
+      refundAmount: { type: 'integer', minimum: 1 },
+      currency: { type: 'string', enum: ['VND'] },
+      summary: {
+        type: 'object',
+        properties: {
+          purchasePrice: { type: 'integer', minimum: 0 },
+          shipping: { type: 'integer', minimum: 0 },
+          feeCredits: { type: 'integer', minimum: 0 },
+          amountYouOwe: { type: 'integer', minimum: 0 },
+        },
+      },
+      paymentMethod: { type: 'string', enum: ['COD', 'PAYPAL'] },
+      refundable: { type: 'boolean' },
+      product: {
+        type: 'object',
+        properties: {
+          id: objectId,
+          title: { type: 'string' },
+          image: { type: 'string', nullable: true },
+        },
+      },
+      buyer: {
+        type: 'object',
+        properties: {
+          displayName: { type: 'string' },
+        },
+      },
+      datePurchased: timestamp,
     },
   },
   INRSellerRequest: {
@@ -1758,6 +1823,10 @@ export const schemas = {
           trackingEvidenceHistory: {
             type: 'array',
             items: { $ref: '#/components/schemas/INRTrackingEvidence' },
+          },
+          refund: {
+            allOf: [{ $ref: '#/components/schemas/Refund' }],
+            nullable: true,
           },
         },
       },

@@ -1,4 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
@@ -20,10 +29,14 @@ const csrf = async (agent) => {
     await agent.get(`${prefix}/auth/csrf-token`).expect(200)
   ).body.data.csrfToken;
 };
-const mutate = (agent, method, path, body) =>
-  agent[method](`${prefix}${path}`)
-    .set('x-csrf-token', agent.csrfToken)
-    .send(body);
+const mutate = (agent, method, path, body, key) => {
+  let operation = agent[method](`${prefix}${path}`).set(
+    'x-csrf-token',
+    agent.csrfToken,
+  );
+  if (key) operation = operation.set('Idempotency-Key', key);
+  return body === undefined ? operation : operation.send(body);
+};
 const login = async (email = 'buyer@example.test') => {
   const agent = request.agent(app);
   await csrf(agent);
@@ -52,6 +65,8 @@ const seed = async () => {
     orderItem2: objectId(),
     otherOrder: objectId(),
     shipment: objectId(),
+    checkoutGroup: objectId(),
+    payment: objectId(),
   };
   await models.User.create([
     {
@@ -150,7 +165,9 @@ const seed = async () => {
       _id: ids.order,
       buyerId: ids.buyer,
       sellerId: ids.seller,
+      checkoutGroupId: ids.checkoutGroup,
       orderStatus: 'CONFIRMED',
+      paymentMethod: 'PAYPAL',
       subtotal: 5000,
       discount: 0,
       shippingFee: 0,
@@ -195,6 +212,30 @@ const seed = async () => {
       ],
     },
   ]);
+  await models.CheckoutGroup.create({
+    _id: ids.checkoutGroup,
+    buyerId: ids.buyer,
+    orderIds: [ids.order],
+    paymentId: ids.payment,
+    paymentMethod: 'PAYPAL',
+    status: 'CONFIRMED',
+    subtotal: 5000,
+    discount: 0,
+    shippingFee: 0,
+    total: 5000,
+    currency: 'VND',
+  });
+  await models.Payment.create({
+    _id: ids.payment,
+    buyerId: ids.buyer,
+    checkoutGroupId: ids.checkoutGroup,
+    method: 'PAYPAL',
+    status: 'CAPTURED',
+    amount: 5000,
+    currency: 'VND',
+    providerOrderId: `SIM-${ids.checkoutGroup}`,
+    capturedAt: new Date(),
+  });
   await models.Shipment.create({
     _id: ids.shipment,
     orderId: ids.order,
@@ -232,6 +273,10 @@ beforeAll(async () => {
     import('../../src/modules/inr-requests/inr-request.model.js'),
     import('../../src/modules/conversations/conversation.model.js'),
     import('../../src/modules/notifications/notification.model.js'),
+    import('../../src/modules/checkout-groups/checkout-group.model.js'),
+    import('../../src/modules/payments/payment.model.js'),
+    import('../../src/modules/payments/refunds/refund.model.js'),
+    import('../../src/modules/idempotency/idempotency-record.model.js'),
     import('../../src/common/utils/hash.js'),
     import('../../src/common/utils/token.js'),
   ]);
@@ -246,11 +291,19 @@ beforeAll(async () => {
     INRRequest: modules[7].INRRequest,
     Conversation: modules[8].Conversation,
     Notification: modules[9].Notification,
+    CheckoutGroup: modules[10].CheckoutGroup,
+    Payment: modules[11].Payment,
+    Refund: modules[12].Refund,
+    IdempotencyRecord: modules[13].IdempotencyRecord,
   };
-  passwordHash = await modules[10].hashPassword(password);
-  signAccess = modules[11].signAccess;
+  passwordHash = await modules[14].hashPassword(password);
+  signAccess = modules[15].signAccess;
   await Promise.all(Object.values(models).map((model) => model.init()));
   ({ app } = await import('../../src/app.js'));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 beforeEach(async () => {
@@ -454,6 +507,235 @@ describe('INR requests', () => {
       `/inr-requests/${requestId}/tracking-evidence`,
       { carrierId: String(dhl._id), trackingId: 'DHL-3' },
     ).expect(409);
+  });
+
+  it('previews seller refund with server-derived amount and rejects non-owners or closed requests', async () => {
+    const buyer = await login();
+    const seller = await login('seller@example.test');
+    const otherSeller = await login('seller2@example.test');
+    const shipper = await login('shipper@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      '/inr-requests',
+      createBody({ quantityMissing: 2 }),
+    ).expect(201);
+    const requestId = created.body.data.id;
+    const preview = await seller
+      .get(`${prefix}/inr-requests/${requestId}/refund-preview`)
+      .expect(200);
+    expect(preview.body.data).toEqual(
+      expect.objectContaining({
+        requestId,
+        orderId: String(ids.order),
+        refundAmount: 2000,
+        currency: 'VND',
+        paymentMethod: 'PAYPAL',
+        refundable: true,
+        summary: {
+          purchasePrice: 2000,
+          shipping: 0,
+          feeCredits: 0,
+          amountYouOwe: 2000,
+        },
+      }),
+    );
+    await otherSeller
+      .get(`${prefix}/inr-requests/${requestId}/refund-preview`)
+      .expect(404);
+    await buyer
+      .get(`${prefix}/inr-requests/${requestId}/refund-preview`)
+      .expect(404);
+    await shipper
+      .get(`${prefix}/inr-requests/${requestId}/refund-preview`)
+      .expect(404);
+    await mutate(buyer, 'patch', `/inr-requests/${requestId}/close`, {}).expect(
+      200,
+    );
+    await seller
+      .get(`${prefix}/inr-requests/${requestId}/refund-preview`)
+      .expect(409);
+  });
+
+  it('completes a PayPal seller refund exactly once and closes the INR after success', async () => {
+    const buyer = await login();
+    const seller = await login('seller@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      '/inr-requests',
+      createBody(),
+    ).expect(201);
+    const requestId = created.body.data.id;
+    await mutate(
+      seller,
+      'post',
+      `/inr-requests/${requestId}/refund`,
+      { amount: 1, paymentId: String(objectId()) },
+      'tamper',
+    ).expect(400);
+    await mutate(
+      seller,
+      'post',
+      `/inr-requests/${requestId}/refund`,
+      {},
+    ).expect(400);
+    const refunded = await mutate(
+      seller,
+      'post',
+      `/inr-requests/${requestId}/refund`,
+      {},
+      'refund-once',
+    ).expect(200);
+    expect(refunded.body.data).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'SELLER_REFUNDED',
+        refundId: expect.any(String),
+        refund: expect.objectContaining({
+          amount: 1000,
+          currency: 'VND',
+          status: 'COMPLETED',
+          method: 'PAYPAL',
+        }),
+      }),
+    );
+    const refund = await models.Refund.findOne({
+      sourceType: 'INR',
+      sourceId: requestId,
+    }).lean();
+    expect(refund).toEqual(
+      expect.objectContaining({
+        paymentId: ids.payment,
+        checkoutGroupId: ids.checkoutGroup,
+        buyerId: ids.buyer,
+        sellerId: ids.seller,
+        amount: 1000,
+        status: 'COMPLETED',
+        providerRefundId: `SIM-REFUND-${refund._id}`,
+      }),
+    );
+    const requestDoc = await models.INRRequest.findById(requestId).lean();
+    expect(requestDoc).toEqual(
+      expect.objectContaining({
+        status: 'CLOSED',
+        closeReason: 'SELLER_REFUNDED',
+        refundId: refund._id,
+      }),
+    );
+    expect(
+      await models.Notification.countDocuments({
+        userId: ids.buyer,
+        eventType: USER4_NOTIFICATION_EVENTS.INR_REFUNDED,
+      }),
+    ).toBe(1);
+    const replay = await mutate(
+      seller,
+      'post',
+      `/inr-requests/${requestId}/refund`,
+      {},
+      'refund-once',
+    ).expect(200);
+    expect(replay.body.data.refund.id).toBe(String(refund._id));
+    expect(await models.Refund.countDocuments({ sourceId: requestId })).toBe(1);
+    expect(
+      await models.Notification.countDocuments({
+        eventType: USER4_NOTIFICATION_EVENTS.INR_REFUNDED,
+      }),
+    ).toBe(1);
+    await mutate(
+      seller,
+      'post',
+      `/inr-requests/${requestId}/refund`,
+      {},
+      'different-key',
+    ).expect(409);
+    expect(await models.Refund.countDocuments({ sourceId: requestId })).toBe(1);
+  });
+
+  it('keeps INR open and records failure when the PayPal refund provider fails', async () => {
+    const provider =
+      await import('../../src/modules/payments/providers/paypal-simulation.provider.js');
+    vi.spyOn(provider, 'refundOrder').mockResolvedValueOnce({
+      providerOrderId: `SIM-${ids.checkoutGroup}`,
+      status: 'FAILED',
+      reason: 'DECLINED',
+    });
+    const buyer = await login();
+    const seller = await login('seller@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      '/inr-requests',
+      createBody(),
+    ).expect(201);
+    const requestId = created.body.data.id;
+    await mutate(
+      seller,
+      'post',
+      `/inr-requests/${requestId}/refund`,
+      {},
+      'refund-fails',
+    ).expect(502);
+    const requestDoc = await models.INRRequest.findById(requestId).lean();
+    expect(requestDoc.status).toBe('OPEN');
+    expect(requestDoc.refundId).toBeUndefined();
+    expect(await models.Refund.findOne({ sourceId: requestId }).lean()).toEqual(
+      expect.objectContaining({ status: 'FAILED', failureReason: 'DECLINED' }),
+    );
+    expect(
+      await models.Notification.countDocuments({
+        eventType: USER4_NOTIFICATION_EVENTS.INR_REFUNDED,
+      }),
+    ).toBe(0);
+    vi.restoreAllMocks();
+    await mutate(
+      seller,
+      'post',
+      `/inr-requests/${requestId}/refund`,
+      {},
+      'refund-retry',
+    ).expect(200);
+    expect(await models.Refund.countDocuments({ sourceId: requestId })).toBe(1);
+  });
+
+  it('records COD refunds explicitly and closes the INR with the same canonical refund flow', async () => {
+    await models.Order.updateOne({ _id: ids.order }, { paymentMethod: 'COD' });
+    await models.CheckoutGroup.updateOne(
+      { _id: ids.checkoutGroup },
+      { paymentMethod: 'COD' },
+    );
+    await models.Payment.updateOne(
+      { _id: ids.payment },
+      {
+        method: 'COD',
+        status: 'CONFIRMED',
+        confirmedAt: new Date(),
+        $unset: { providerOrderId: 1, capturedAt: 1 },
+      },
+    );
+    const buyer = await login();
+    const seller = await login('seller@example.test');
+    const created = await mutate(
+      buyer,
+      'post',
+      '/inr-requests',
+      createBody(),
+    ).expect(201);
+    const refunded = await mutate(
+      seller,
+      'post',
+      `/inr-requests/${created.body.data.id}/refund`,
+      {},
+      'cod-refund',
+    ).expect(200);
+    expect(refunded.body.data.refund).toEqual(
+      expect.objectContaining({ method: 'COD', status: 'COMPLETED' }),
+    );
+    const refund = await models.Refund.findOne({
+      sourceId: created.body.data.id,
+    }).lean();
+    expect(refund.providerRefundId).toBe(`COD-${refund._id}`);
   });
 
   it('redacts buyer order shipment tracking while preserving seller and shipper shipment visibility', async () => {

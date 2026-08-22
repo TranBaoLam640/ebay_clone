@@ -14,6 +14,7 @@ const publicProjection = {
   requestAmount: 1,
   currency: 1,
   conversationId: 1,
+  refundId: 1,
   status: 1,
   trackingEvidenceHistory: 1,
   closedAt: 1,
@@ -93,5 +94,17 @@ export const closeOpenRequest = (
   INRRequest.findOneAndUpdate(
     { _id: id, buyerId, status: 'OPEN' },
     { status: 'CLOSED', closedAt, closeReason },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
+
+export const closeOpenRequestForRefund = (
+  id,
+  sellerId,
+  { closedAt, closeReason, refundId },
+  session,
+) =>
+  INRRequest.findOneAndUpdate(
+    { _id: id, sellerId, status: 'OPEN' },
+    { status: 'CLOSED', closedAt, closeReason, refundId },
     { session, returnDocument: 'after', projection: publicProjection },
   ).lean();

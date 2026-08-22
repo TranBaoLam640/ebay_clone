@@ -13,6 +13,7 @@ import { SellerFeedback } from '../modules/seller-feedbacks/seller-feedback.mode
 import { Coupon } from '../modules/coupons/coupon.model.js';
 import { CheckoutGroup } from '../modules/checkout-groups/checkout-group.model.js';
 import { Payment } from '../modules/payments/payment.model.js';
+import { Refund } from '../modules/payments/refunds/refund.model.js';
 import { ReturnRequest } from '../modules/returns/return-request.model.js';
 import { seedCarriers } from '../modules/carriers/carrier.seed.js';
 
@@ -875,6 +876,7 @@ const seed = async () => {
     },
   });
   await ReturnRequest.deleteMany({ _id: ids.returnRequest });
+  await Refund.deleteMany({ paymentId: ids.payment });
   await Payment.deleteMany({ _id: ids.payment });
   await CheckoutGroup.deleteMany({ _id: ids.checkoutGroup });
   await SellerFeedback.deleteMany({ sellerId: { $in: sellerIds } });

@@ -77,6 +77,10 @@ const schema = new mongoose.Schema(
       ref: 'Conversation',
       required: true,
     },
+    refundId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Refund',
+    },
     status: {
       type: String,
       enum: INR_STATUSES,

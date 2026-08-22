@@ -1,13 +1,21 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { inrApi } from '../services/inr-api';
-import type { CreateInrRequestInput, InrListQuery, InrTrackingEvidenceInput } from '../types/inr.types';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { inrApi } from "../services/inr-api";
+import type {
+  CreateInrRequestInput,
+  InrListQuery,
+  InrTrackingEvidenceInput,
+} from "../types/inr.types";
 
 export const inrKeys = {
-  all: ['inr-requests'] as const,
-  buyerList: (query: InrListQuery) => ['inr-requests', 'buyer', query] as const,
-  sellerList: (query: InrListQuery) => ['inr-requests', 'seller', query] as const,
-  detail: (requestId?: string) => ['inr-requests', 'detail', requestId] as const,
-  carriers: ['inr-requests', 'carriers'] as const,
+  all: ["inr-requests"] as const,
+  buyerList: (query: InrListQuery) => ["inr-requests", "buyer", query] as const,
+  sellerList: (query: InrListQuery) =>
+    ["inr-requests", "seller", query] as const,
+  detail: (requestId?: string) =>
+    ["inr-requests", "detail", requestId] as const,
+  refundPreview: (requestId?: string) =>
+    ["inr-requests", "refund-preview", requestId] as const,
+  carriers: ["inr-requests", "carriers"] as const,
 };
 
 export function useBuyerInrRequests(query: InrListQuery = {}) {
@@ -40,13 +48,21 @@ export function useCarriers() {
   });
 }
 
+export function useInrRefundPreview(requestId?: string) {
+  return useQuery({
+    queryKey: inrKeys.refundPreview(requestId),
+    queryFn: () => inrApi.getRefundPreview(requestId!),
+    enabled: !!requestId,
+  });
+}
+
 export function useInrActions() {
   const qc = useQueryClient();
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: inrKeys.all });
-    qc.invalidateQueries({ queryKey: ['orders'] });
-    qc.invalidateQueries({ queryKey: ['order'] });
-    qc.invalidateQueries({ queryKey: ['notifications'] });
+    qc.invalidateQueries({ queryKey: ["orders"] });
+    qc.invalidateQueries({ queryKey: ["order"] });
+    qc.invalidateQueries({ queryKey: ["notifications"] });
   };
 
   return {
@@ -59,8 +75,23 @@ export function useInrActions() {
       onSuccess: invalidate,
     }),
     updateTrackingEvidence: useMutation({
-      mutationFn: ({ requestId, input }: { requestId: string; input: InrTrackingEvidenceInput }) =>
-        inrApi.updateTrackingEvidence(requestId, input),
+      mutationFn: ({
+        requestId,
+        input,
+      }: {
+        requestId: string;
+        input: InrTrackingEvidenceInput;
+      }) => inrApi.updateTrackingEvidence(requestId, input),
+      onSuccess: invalidate,
+    }),
+    refund: useMutation({
+      mutationFn: ({
+        requestId,
+        idempotencyKey,
+      }: {
+        requestId: string;
+        idempotencyKey: string;
+      }) => inrApi.refundRequest(requestId, idempotencyKey),
       onSuccess: invalidate,
     }),
   };

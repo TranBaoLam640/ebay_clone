@@ -49,3 +49,15 @@ export const trackingEvidenceSchema = z.object({
   params: z.object({ requestId: objectId }).strict(),
   query: empty,
 });
+
+export const refundPreviewSchema = z.object({
+  body: z.any(),
+  params: z.object({ requestId: objectId }).strict(),
+  query: empty,
+});
+
+export const refundSchema = z.object({
+  body: empty,
+  params: z.object({ requestId: objectId }).strict(),
+  query: empty,
+});

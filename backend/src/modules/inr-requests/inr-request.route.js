@@ -6,6 +6,8 @@ import {
   createSchema,
   idSchema,
   listSchema,
+  refundPreviewSchema,
+  refundSchema,
   trackingEvidenceSchema,
 } from './inr-request.validation.js';
 
@@ -14,6 +16,16 @@ inrRequestRoute.use(authenticate);
 inrRequestRoute.post('/', validate(createSchema), controller.create);
 inrRequestRoute.get('/', validate(listSchema), controller.listBuyer);
 inrRequestRoute.get('/seller', validate(listSchema), controller.listSeller);
+inrRequestRoute.get(
+  '/:requestId/refund-preview',
+  validate(refundPreviewSchema),
+  controller.refundPreview,
+);
+inrRequestRoute.post(
+  '/:requestId/refund',
+  validate(refundSchema),
+  controller.refund,
+);
 inrRequestRoute.get('/:requestId', validate(idSchema), controller.get);
 inrRequestRoute.patch(
   '/:requestId/close',

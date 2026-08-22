@@ -8,9 +8,12 @@ import * as carrierService from '../carriers/carrier.service.js';
 import * as conversationRepository from '../conversations/conversation.repository.js';
 import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
+import * as paymentRepository from '../payments/payment.repository.js';
+import * as refundService from '../payments/refunds/refund.service.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
 import * as shipmentRepository from '../shipments/shipment.repository.js';
 import { User } from '../users/user.model.js';
+import * as idempotencyService from '../idempotency/idempotency.service.js';
 import {
   INR_CLOSE_REASONS,
   INR_ISSUE_TYPE,
@@ -28,6 +31,9 @@ const notFound = () =>
 
 const invalidState = (message) =>
   inrError(409, ERROR_CODES.INR_INVALID_STATE, message);
+
+const paymentInvalidState = (message) =>
+  inrError(409, ERROR_CODES.PAYMENT_INVALID_STATE, message);
 
 const safeShipment = (shipment) =>
   shipment
@@ -81,13 +87,28 @@ const buyerDto = ({ request, orderItem, shipment }) => ({
   currency: request.currency,
   shipment: safeShipment(shipment),
   conversationId: String(request.conversationId),
+  refundId: request.refundId ? String(request.refundId) : null,
   createdAt: request.createdAt,
   updatedAt: request.updatedAt,
   closedAt: request.closedAt ?? null,
   closeReason: request.closeReason ?? null,
 });
 
-const sellerDto = ({ request, orderItem, shipment, buyer }) => ({
+const refundDto = (refund) =>
+  refund
+    ? {
+        id: String(refund.id ?? refund._id),
+        amount: refund.amount,
+        currency: refund.currency,
+        status: refund.status,
+        method: refund.method,
+        completedAt: refund.completedAt ?? null,
+        createdAt: refund.createdAt,
+        updatedAt: refund.updatedAt,
+      }
+    : null;
+
+const sellerDto = ({ request, orderItem, shipment, buyer, refund }) => ({
   id: String(request._id),
   type: INR_ISSUE_TYPE,
   orderId: String(request.orderId),
@@ -110,6 +131,8 @@ const sellerDto = ({ request, orderItem, shipment, buyer }) => ({
   latestTrackingEvidence: latestEvidence(request),
   trackingEvidenceHistory: request.trackingEvidenceHistory ?? [],
   conversationId: String(request.conversationId),
+  refundId: request.refundId ? String(request.refundId) : null,
+  refund: refundDto(refund),
   createdAt: request.createdAt,
   updatedAt: request.updatedAt,
   closedAt: request.closedAt ?? null,
@@ -117,7 +140,7 @@ const sellerDto = ({ request, orderItem, shipment, buyer }) => ({
 });
 
 const loadContext = async (request, session) => {
-  const [order, shipment, buyer] = await Promise.all([
+  const [order, shipment, buyer, refund] = await Promise.all([
     orderRepository.findOrderItem({
       orderId: request.orderId,
       orderItemId: request.orderItemId,
@@ -128,12 +151,16 @@ const loadContext = async (request, session) => {
       .select('fullName email avatarUrl')
       .session(session || null)
       .lean(),
+    request.refundId
+      ? refundService.findById(request.refundId, session)
+      : Promise.resolve(null),
   ]);
   return {
     request,
     orderItem: order?.items?.[0] ?? null,
     shipment,
     buyer,
+    refund,
   };
 };
 
@@ -230,6 +257,21 @@ const notifySeller = (sellerUserId, requestId, session) =>
       referenceId: requestId,
       eventType: USER4_NOTIFICATION_EVENTS.INR_REQUESTED,
       eventKey: `${USER4_NOTIFICATION_EVENTS.INR_REQUESTED}:${requestId}:SELLER`,
+    },
+    session,
+  );
+
+const notifyBuyerRefunded = (buyerId, requestId, refundId, session) =>
+  notificationService.createNotification(
+    buyerId,
+    {
+      type: 'DISPUTE',
+      title: 'INR refund completed',
+      message: 'The seller refunded your item not received request',
+      referenceType: INR_REFERENCE_TYPE,
+      referenceId: requestId,
+      eventType: USER4_NOTIFICATION_EVENTS.INR_REFUNDED,
+      eventKey: `${USER4_NOTIFICATION_EVENTS.INR_REFUNDED}:${requestId}:BUYER`,
     },
     session,
   );
@@ -405,3 +447,179 @@ export const updateTrackingEvidence = (
     if (!updated) throw invalidState('INR request is not open');
     return sellerDto(await loadContext(updated, session));
   });
+
+const ensureSellerRequest = async (userId, id, session) => {
+  const seller = await sellerRepository.findByUserId(userId, session);
+  if (!seller) throw notFound();
+  const request = await repository.findOwnedBySeller(seller._id, id, session);
+  if (!request) throw notFound();
+  return { seller, request };
+};
+
+const refundPaymentContext = async (request, session) => {
+  if (request.status !== 'OPEN') throw invalidState('INR request is not open');
+  if (!(request.requestAmount > 0))
+    throw invalidState('INR request amount must be positive');
+  const order = await orderRepository.findOrderItem({
+    orderId: request.orderId,
+    orderItemId: request.orderItemId,
+    session,
+  });
+  const item = order?.items?.[0];
+  if (!order || !item)
+    throw inrError(404, ERROR_CODES.NOT_FOUND, 'Order item not found');
+  if (String(order.buyerId) !== String(request.buyerId))
+    throw paymentInvalidState('INR order buyer mismatch');
+  if (String(order.sellerId) !== String(request.sellerId))
+    throw paymentInvalidState('INR order seller mismatch');
+  if (!order.checkoutGroupId)
+    throw paymentInvalidState('INR order has no checkout group payment');
+  const payment = await paymentRepository.ownedByGroupInternal(
+    request.buyerId,
+    order.checkoutGroupId,
+    session,
+  );
+  if (!payment) throw paymentInvalidState('Payment not found for INR order');
+  if (String(payment.checkoutGroupId) !== String(order.checkoutGroupId))
+    throw paymentInvalidState('Payment does not belong to INR order');
+  if (payment.method === 'PAYPAL' && payment.status !== 'CAPTURED')
+    throw paymentInvalidState('PayPal payment has not been captured');
+  if (payment.method === 'COD' && payment.status !== 'CONFIRMED')
+    throw paymentInvalidState('COD payment has not been confirmed');
+  if (request.requestAmount > payment.amount)
+    throw paymentInvalidState('INR refund amount exceeds payment amount');
+  return { order, item, payment };
+};
+
+const previewDto = ({ request, order, item, payment, buyer }) => ({
+  requestId: String(request._id),
+  orderId: String(request.orderId),
+  refundAmount: request.requestAmount,
+  currency: request.currency,
+  summary: {
+    purchasePrice: request.requestAmount,
+    shipping: 0,
+    feeCredits: 0,
+    amountYouOwe: request.requestAmount,
+  },
+  paymentMethod: payment.method,
+  refundable: true,
+  product: {
+    id: String(request.productId),
+    title: item.title ?? 'Purchased item',
+    image: item.image ?? null,
+  },
+  buyer: {
+    displayName: buyer?.fullName ?? buyer?.email ?? 'Buyer',
+  },
+  datePurchased: order.createdAt,
+});
+
+export const refundPreview = async (userId, id) => {
+  const { request } = await ensureSellerRequest(userId, id);
+  const { order, item, payment } = await refundPaymentContext(request);
+  const buyer = await User.findById(request.buyerId)
+    .select('fullName email')
+    .lean();
+  return previewDto({ request, order, item, payment, buyer });
+};
+
+const refundInput = ({ request, payment }) => ({
+  paymentId: payment._id,
+  checkoutGroupId: payment.checkoutGroupId,
+  buyerId: request.buyerId,
+  sellerId: request.sellerId,
+  sourceType: 'INR',
+  sourceId: request._id,
+  amount: request.requestAmount,
+  currency: request.currency,
+  method: payment.method,
+});
+
+export const refund = async (userId, id, key, { now = new Date() } = {}) => {
+  const hash = idempotencyService.requestHash({ requestId: id });
+  const claim = await idempotencyService.claim('INR_REFUND', userId, key, hash);
+  if (claim.replay) return claim.replay;
+  try {
+    const { seller, request } = await ensureSellerRequest(userId, id);
+    const { payment } = await refundPaymentContext(request);
+    const claimed = await refundService.prepare(
+      refundInput({ request, payment }),
+    );
+    let refundRecord = claimed.refund;
+    if (claimed.state !== 'COMPLETED')
+      refundRecord = await refundService.processProvider({
+        refund: refundRecord,
+        payment,
+        claimToken: claimed.claimToken,
+      });
+
+    const result = await checkoutRepository.transaction(async (session) => {
+      const latest = await repository.findOwnedBySeller(
+        seller._id,
+        id,
+        session,
+      );
+      if (!latest) throw notFound();
+      if (latest.status !== 'OPEN')
+        throw invalidState('INR request is not open');
+      const completedRefund = await refundService.complete(
+        refundRecord,
+        session,
+        now,
+      );
+      if (!completedRefund)
+        throw paymentInvalidState('Refund could not be completed');
+      const closed = await repository.closeOpenRequestForRefund(
+        id,
+        seller._id,
+        {
+          closedAt: now,
+          closeReason: INR_CLOSE_REASONS.SELLER_REFUNDED,
+          refundId: completedRefund._id,
+        },
+        session,
+      );
+      if (!closed) throw invalidState('INR request is not open');
+      await notifyBuyerRefunded(
+        closed.buyerId,
+        closed._id,
+        completedRefund._id,
+        session,
+      );
+      const response = {
+        success: true,
+        data: sellerDto(await loadContext(closed, session)),
+      };
+      const completed = await idempotencyService.complete(
+        'INR_REFUND',
+        userId,
+        key,
+        claim.claimToken,
+        {
+          resourceId: completedRefund._id,
+          responseStatus: 200,
+          responseBody: response,
+        },
+        session,
+      );
+      if (!completed)
+        throw inrError(
+          409,
+          ERROR_CODES.IDEMPOTENCY_PROCESSING,
+          'Idempotency claim was lost',
+        );
+      return { status: 200, body: response };
+    });
+    return result;
+  } catch (error) {
+    await idempotencyService.fail(
+      'INR_REFUND',
+      userId,
+      key,
+      claim.claimToken,
+      error,
+    );
+    throw error;
+  }
+};

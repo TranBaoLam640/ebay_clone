@@ -70,6 +70,41 @@ export const inrRequestPaths = {
       security: security.access,
     }),
   },
+  '/inr-requests/{requestId}/refund-preview': {
+    get: operation({
+      tag: 'INR Requests',
+      operationId: 'previewINRRefund',
+      summary: 'Preview a seller INR refund',
+      description:
+        'Seller-only preview. The server derives the buyer, order, payment, payment method, and refund amount from the OPEN INR request. The refund amount is always INRRequest.requestAmount.',
+      parameters: [requestId],
+      success: response('INR refund preview', ref('INRRefundPreview')),
+      errors: [400, 401, 404, 409, 429, 500],
+      security: security.access,
+    }),
+  },
+  '/inr-requests/{requestId}/refund': {
+    post: operation({
+      tag: 'INR Requests',
+      operationId: 'refundINRRequest',
+      summary: 'Refund an open seller-owned INR request',
+      description:
+        'Seller-only idempotent action. Requires Idempotency-Key and accepts an empty JSON body. The backend derives amount, buyer, order, and payment; clients cannot submit refund amount or payment identifiers. INR closes with SELLER_REFUNDED only after the canonical refund completes.',
+      parameters: [
+        requestId,
+        {
+          name: 'Idempotency-Key',
+          in: 'header',
+          required: true,
+          schema: { type: 'string', minLength: 1 },
+        },
+      ],
+      requestBody: body({ type: 'object', additionalProperties: false }),
+      success: response('Refunded INR request', ref('INRSellerRequest')),
+      errors: [400, 401, 404, 409, 429, 500, 502],
+      security: security.unsafe,
+    }),
+  },
   '/inr-requests/{requestId}/close': {
     patch: operation({
       tag: 'INR Requests',

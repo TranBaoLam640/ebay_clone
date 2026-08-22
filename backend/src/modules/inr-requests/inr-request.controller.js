@@ -1,4 +1,6 @@
 import { success } from '../../common/utils/api-response.js';
+import { AppError } from '../../common/errors/app-error.js';
+import { ERROR_CODES } from '../../common/constants/error-codes.js';
 import * as service from './inr-request.service.js';
 
 export const create = async (req, res, next) => {
@@ -59,6 +61,37 @@ export const updateTrackingEvidence = async (req, res, next) => {
         req.validated.body,
       ),
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const refundPreview = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.refundPreview(req.user.id, req.validated.params.requestId),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const refund = async (req, res, next) => {
+  try {
+    const key = req.get('Idempotency-Key')?.trim();
+    if (!key)
+      throw new AppError(
+        400,
+        ERROR_CODES.IDEMPOTENCY_KEY_REQUIRED,
+        'Idempotency-Key header is required',
+      );
+    const response = await service.refund(
+      req.user.id,
+      req.validated.params.requestId,
+      key,
+    );
+    res.status(response.status).json(response.body);
   } catch (error) {
     next(error);
   }

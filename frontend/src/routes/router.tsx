@@ -32,6 +32,7 @@ const ShipperShipmentsPage = lazy(() => import('@/features/shipping/pages/shippe
 const BuyerInrDetailPage = lazy(() => import('@/features/inr/pages/buyer-inr-detail-page'));
 const SellerRequestsPage = lazy(() => import('@/features/inr/pages/seller-requests-page'));
 const SellerRequestDetailPage = lazy(() => import('@/features/inr/pages/seller-request-detail-page'));
+const SellerRefundReviewPage = lazy(() => import('@/features/inr/pages/seller-refund-review-page'));
 const CheckoutPage = lazy(() => import('@/features/checkout/pages/checkout-page'));
 const OrdersPage = lazy(() => import('@/features/checkout/pages/orders-page'));
 const OrderDetailPage = lazy(() => import('@/features/checkout/pages/order-detail-page'));
@@ -99,6 +100,7 @@ export const router = createBrowserRouter([
               { path: 'seller-feedbacks', element: <Lazy><SellerFeedbacksPage /></Lazy> },
               { path: 'seller-shipments', element: <Lazy><SellerShipmentsPage /></Lazy> },
               { path: 'requests-disputes', element: <Lazy><SellerRequestsPage /></Lazy> },
+              { path: 'requests-disputes/:requestId/refund', element: <Lazy><SellerRefundReviewPage /></Lazy> },
               { path: 'requests-disputes/:requestId', element: <Lazy><SellerRequestDetailPage /></Lazy> },
               { path: 'notifications', element: <Lazy><NotificationsPage /></Lazy> },
             ],
@@ -126,3 +128,4 @@ export const router = createBrowserRouter([
     ],
   },
 ]);
+

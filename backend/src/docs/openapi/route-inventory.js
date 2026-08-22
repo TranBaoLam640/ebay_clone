@@ -84,6 +84,8 @@ export const EXPECTED_ROUTE_INVENTORY = [
   'GET /api/v1/inr-requests',
   'GET /api/v1/inr-requests/seller',
   'GET /api/v1/inr-requests/{requestId}',
+  'GET /api/v1/inr-requests/{requestId}/refund-preview',
+  'POST /api/v1/inr-requests/{requestId}/refund',
   'PATCH /api/v1/inr-requests/{requestId}/close',
   'PATCH /api/v1/inr-requests/{requestId}/tracking-evidence',
   'GET /api/v1/conversations',

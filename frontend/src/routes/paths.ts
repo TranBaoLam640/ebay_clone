@@ -30,6 +30,8 @@ export const paths = {
     sellerShipments: '/account/seller-shipments',
     requestsDisputes: '/account/requests-disputes',
     requestDispute: (id: string) => `/account/requests-disputes/${id}`,
+    requestDisputeRefund: (id: string) =>
+      `/account/requests-disputes/${id}/refund`,
   },
   shipper: {
     shipments: '/shipper/shipments',
@@ -38,3 +40,4 @@ export const paths = {
 
 export const defaultPathForRole = (role?: UserRole | null) =>
   role === 'SHIPPER' ? paths.shipper.shipments : paths.home;
+

@@ -1,8 +1,9 @@
-import type { PaginationMeta } from '@/services/types';
+import type { PaginationMeta } from "@/services/types";
 
-export type InrStatus = 'OPEN' | 'CLOSED';
-export type InrResolution = 'REFUND' | 'WANT_ITEM';
-export type InrType = 'ITEM_NOT_RECEIVED';
+export type InrStatus = "OPEN" | "CLOSED";
+export type InrResolution = "REFUND" | "WANT_ITEM";
+export type InrType = "ITEM_NOT_RECEIVED";
+export type InrCloseReason = "ITEM_ARRIVED" | "SELLER_REFUNDED";
 
 export interface InrItemSummary {
   id: string;
@@ -17,7 +18,7 @@ export interface InrItemSummary {
 
 export interface InrSafeShipment {
   id: string;
-  status: 'READY_FOR_PICKUP' | 'IN_TRANSIT' | 'DELIVERED';
+  status: "READY_FOR_PICKUP" | "IN_TRANSIT" | "DELIVERED";
   estimatedDeliveryAt: string;
   pickedUpAt: string | null;
   deliveredAt: string | null;
@@ -51,10 +52,22 @@ export interface InrBuyerRequest {
   currency: string;
   shipment: InrSafeShipment | null;
   conversationId: string;
+  refundId: string | null;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
-  closeReason: 'ITEM_ARRIVED' | null;
+  closeReason: InrCloseReason | null;
+}
+
+export interface InrRefundSummary {
+  id: string;
+  amount: number;
+  currency: string;
+  status: "PROCESSING" | "COMPLETED" | "FAILED";
+  method: "COD" | "PAYPAL";
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface InrSellerRequest extends InrBuyerRequest {
@@ -66,6 +79,31 @@ export interface InrSellerRequest extends InrBuyerRequest {
   shipment: InrSellerShipment | null;
   latestTrackingEvidence: InrTrackingEvidence | null;
   trackingEvidenceHistory: InrTrackingEvidence[];
+  refund: InrRefundSummary | null;
+}
+
+export interface InrRefundPreview {
+  requestId: string;
+  orderId: string;
+  refundAmount: number;
+  currency: string;
+  summary: {
+    purchasePrice: number;
+    shipping: number;
+    feeCredits: number;
+    amountYouOwe: number;
+  };
+  paymentMethod: "COD" | "PAYPAL";
+  refundable: boolean;
+  product: {
+    id: string;
+    title: string;
+    image: string | null;
+  };
+  buyer: {
+    displayName: string;
+  };
+  datePurchased: string;
 }
 
 export interface Carrier {

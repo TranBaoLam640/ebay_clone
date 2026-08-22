@@ -66,6 +66,7 @@ export const createForOrder = async (
           orderId: order._id,
           buyerId: order.buyerId,
           sellerId: order.sellerId,
+          purpose: 'ORIGINAL',
           shipperId: null,
           carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
           trackingNumber: generateTrackingNumber(),
@@ -128,7 +129,7 @@ export const listForSeller = async (userId, query) => {
 
 export const pickup = (shipperId, shipmentId) =>
   checkoutRepository.transaction(async (session) => {
-    const existing = await repository.findById(shipmentId, session);
+    const existing = await repository.findInternalById(shipmentId, session);
     if (!existing) throw notFound();
     const pickedUpAt = new Date();
     const claimed = await repository.claimForPickup(
@@ -138,20 +139,21 @@ export const pickup = (shipperId, shipmentId) =>
       session,
     );
     if (!claimed) throw invalidState('Shipment is not available for pickup');
-    await shipmentNotification(
-      claimed.buyerId,
-      claimed,
-      USER4_NOTIFICATION_EVENTS.SHIPMENT_PICKED_UP,
-      'Shipment picked up',
-      'Your order is now in transit with SBay Express',
-      session,
-    );
+    if (existing.purpose === 'ORIGINAL')
+      await shipmentNotification(
+        claimed.buyerId,
+        claimed,
+        USER4_NOTIFICATION_EVENTS.SHIPMENT_PICKED_UP,
+        'Shipment picked up',
+        'Your order is now in transit with SBay Express',
+        session,
+      );
     return claimed;
   });
 
 export const deliver = (shipperId, shipmentId) =>
   checkoutRepository.transaction(async (session) => {
-    const existing = await repository.findById(shipmentId, session);
+    const existing = await repository.findInternalById(shipmentId, session);
     if (!existing) throw notFound();
     if (
       existing.status !== 'IN_TRANSIT' ||
@@ -166,20 +168,22 @@ export const deliver = (shipperId, shipmentId) =>
       session,
     );
     if (!delivered) throw invalidState('Shipment cannot be delivered');
-    const order = await orderRepository.markDeliveredFromShipment(
-      delivered.orderId,
-      deliveredAt,
-      session,
-    );
-    if (!order)
-      throw invalidState('Order is not confirmed for shipment delivery');
-    await shipmentNotification(
-      delivered.buyerId,
-      delivered,
-      USER4_NOTIFICATION_EVENTS.SHIPMENT_DELIVERED,
-      'Shipment delivered',
-      'Your order was delivered',
-      session,
-    );
+    if (existing.purpose === 'ORIGINAL') {
+      const order = await orderRepository.markDeliveredFromShipment(
+        delivered.orderId,
+        deliveredAt,
+        session,
+      );
+      if (!order)
+        throw invalidState('Order is not confirmed for shipment delivery');
+      await shipmentNotification(
+        delivered.buyerId,
+        delivered,
+        USER4_NOTIFICATION_EVENTS.SHIPMENT_DELIVERED,
+        'Shipment delivered',
+        'Your order was delivered',
+        session,
+      );
+    }
     return delivered;
   });

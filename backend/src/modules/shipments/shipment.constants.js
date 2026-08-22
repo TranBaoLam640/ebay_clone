@@ -8,6 +8,8 @@ export const SHIPMENT_STATUSES = Object.freeze([
   'DELIVERED',
 ]);
 
+export const SHIPMENT_PURPOSES = Object.freeze(['ORIGINAL', 'REPLACEMENT']);
+
 export const SHIPMENT_TRANSITIONS = Object.freeze({
   READY_FOR_PICKUP: Object.freeze(['IN_TRANSIT']),
   IN_TRANSIT: Object.freeze(['DELIVERED']),

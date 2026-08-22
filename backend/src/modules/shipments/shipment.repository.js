@@ -16,6 +16,16 @@ const publicProjection = {
   updatedAt: 1,
 };
 
+const internalProjection = {
+  ...publicProjection,
+  purpose: 1,
+  replacementId: 1,
+};
+
+const originalPurposeFilter = {
+  $or: [{ purpose: 'ORIGINAL' }, { purpose: { $exists: false } }],
+};
+
 export const toPublic = (shipment) => {
   const source = shipment?.toObject ? shipment.toObject() : shipment;
   return Object.fromEntries(
@@ -44,7 +54,11 @@ export const create = async (data, session) =>
   (await Shipment.create([data], { session }))[0];
 
 export const listAvailable = (skip, limit, session) =>
-  Shipment.find({ status: 'READY_FOR_PICKUP', shipperId: null })
+  Shipment.find({
+    ...originalPurposeFilter,
+    status: 'READY_FOR_PICKUP',
+    shipperId: null,
+  })
     .select(publicProjection)
     .sort({ createdAt: -1, _id: -1 })
     .skip(skip)
@@ -54,12 +68,17 @@ export const listAvailable = (skip, limit, session) =>
 
 export const countAvailable = (session) =>
   Shipment.countDocuments({
+    ...originalPurposeFilter,
     status: 'READY_FOR_PICKUP',
     shipperId: null,
   }).session(session || null);
 
 export const listByShipper = (shipperId, skip, limit, session) =>
-  Shipment.find({ shipperId, status: { $in: ['IN_TRANSIT', 'DELIVERED'] } })
+  Shipment.find({
+    ...originalPurposeFilter,
+    shipperId,
+    status: { $in: ['IN_TRANSIT', 'DELIVERED'] },
+  })
     .select(publicProjection)
     .sort({ createdAt: -1, _id: -1 })
     .skip(skip)
@@ -69,12 +88,13 @@ export const listByShipper = (shipperId, skip, limit, session) =>
 
 export const countByShipper = (shipperId, session) =>
   Shipment.countDocuments({
+    ...originalPurposeFilter,
     shipperId,
     status: { $in: ['IN_TRANSIT', 'DELIVERED'] },
   }).session(session || null);
 
 export const listBySeller = (sellerId, skip, limit, session) =>
-  Shipment.find({ sellerId })
+  Shipment.find({ sellerId, ...originalPurposeFilter })
     .select(publicProjection)
     .sort({ createdAt: -1, _id: -1 })
     .skip(skip)
@@ -83,7 +103,9 @@ export const listBySeller = (sellerId, skip, limit, session) =>
     .lean();
 
 export const countBySeller = (sellerId, session) =>
-  Shipment.countDocuments({ sellerId }).session(session || null);
+  Shipment.countDocuments({ sellerId, ...originalPurposeFilter }).session(
+    session || null,
+  );
 
 export const findById = (id, session) =>
   Shipment.findById(id)
@@ -91,15 +113,36 @@ export const findById = (id, session) =>
     .session(session || null)
     .lean();
 
-export const findByOrderId = (orderId, session) =>
-  Shipment.findOne({ orderId })
+export const findInternalById = (id, session) =>
+  Shipment.findById(id)
+    .select(internalProjection)
+    .session(session || null)
+    .lean();
+
+export const findOriginalByOrderId = (orderId, session) =>
+  Shipment.findOne({ orderId, ...originalPurposeFilter })
     .select(publicProjection)
     .session(session || null)
     .lean();
 
+export const findByOrderId = findOriginalByOrderId;
+
 export const findByOrderIds = (orderIds, session) =>
-  Shipment.find({ orderId: { $in: orderIds } })
+  Shipment.find({ orderId: { $in: orderIds }, ...originalPurposeFilter })
     .select(publicProjection)
+    .session(session || null)
+    .lean();
+
+export const listByOrderId = (orderId, session) =>
+  Shipment.find({ orderId })
+    .select(internalProjection)
+    .sort({ createdAt: -1, _id: -1 })
+    .session(session || null)
+    .lean();
+
+export const findByReplacementId = (replacementId, session) =>
+  Shipment.findOne({ replacementId, purpose: 'REPLACEMENT' })
+    .select(internalProjection)
     .session(session || null)
     .lean();
 

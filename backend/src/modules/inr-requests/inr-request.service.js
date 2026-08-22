@@ -146,7 +146,7 @@ const loadContext = async (request, session) => {
       orderItemId: request.orderItemId,
       session,
     }),
-    shipmentRepository.findByOrderId(request.orderId, session),
+    shipmentRepository.findOriginalByOrderId(request.orderId, session),
     User.findById(request.buyerId)
       .select('fullName email avatarUrl')
       .session(session || null)
@@ -291,7 +291,7 @@ export const create = (buyerId, input, { now = new Date() } = {}) =>
       (candidate) => String(candidate._id) === input.orderItemId,
     );
     const shipment = order
-      ? await shipmentRepository.findByOrderId(order._id, session)
+      ? await shipmentRepository.findOriginalByOrderId(order._id, session)
       : null;
     validateEligibility({
       order,

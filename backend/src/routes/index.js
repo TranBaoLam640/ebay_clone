@@ -37,6 +37,7 @@ import { returnRoute } from '../modules/returns/return-request.route.js';
 import { shipmentRoute } from '../modules/shipments/shipment.route.js';
 import { carrierRoute } from '../modules/carriers/carrier.route.js';
 import { inrRequestRoute } from '../modules/inr-requests/inr-request.route.js';
+import { replacementRoute } from '../modules/replacements/replacement.route.js';
 import { uploadRoute } from '../modules/uploads/upload.route.js';
 import { conversationRoute } from '../modules/conversations/conversation.route.js';
 
@@ -74,5 +75,6 @@ routes.use('/returns', returnRoute);
 routes.use('/shipments', shipmentRoute);
 routes.use('/carriers', carrierRoute);
 routes.use('/inr-requests', inrRequestRoute);
+routes.use('/replacements', replacementRoute);
 routes.use('/uploads', uploadRoute);
 routes.use('/conversations', conversationRoute, conversationOfferRoute);

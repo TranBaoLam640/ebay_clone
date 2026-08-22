@@ -86,6 +86,8 @@ export const EXPECTED_ROUTE_INVENTORY = [
   'GET /api/v1/inr-requests/{requestId}',
   'GET /api/v1/inr-requests/{requestId}/refund-preview',
   'POST /api/v1/inr-requests/{requestId}/refund',
+  'PATCH /api/v1/inr-requests/{requestId}/refund-instead',
+  'POST /api/v1/inr-requests/{requestId}/replacements',
   'PATCH /api/v1/inr-requests/{requestId}/close',
   'PATCH /api/v1/inr-requests/{requestId}/tracking-evidence',
   'GET /api/v1/conversations',
@@ -103,6 +105,8 @@ export const EXPECTED_ROUTE_INVENTORY = [
   'POST /api/v1/offers/{offerId}/decline',
   'POST /api/v1/offers/{offerId}/counter',
   'POST /api/v1/offers/{offerId}/retract',
+  'POST /api/v1/replacements/{replacementId}/accept',
+  'POST /api/v1/replacements/{replacementId}/decline',
 ];
 
 export const OUT_OF_SCOPE_PATH_FRAGMENTS = ['admin'];

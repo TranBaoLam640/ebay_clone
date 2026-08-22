@@ -1484,7 +1484,7 @@ export const schemas = {
       id: objectId,
       type: {
         type: 'string',
-        enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'SYSTEM'],
+        enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'REPLACEMENT', 'SYSTEM'],
       },
       content: { type: 'string', nullable: true },
       status: { type: 'string', enum: ['SENT', 'DELIVERED', 'READ'] },
@@ -1552,7 +1552,7 @@ export const schemas = {
       clientMessageId: { type: 'string', maxLength: 100 },
       type: {
         type: 'string',
-        enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'SYSTEM'],
+        enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'REPLACEMENT', 'SYSTEM'],
       },
       content: { type: 'string', nullable: true, maxLength: 4000 },
       attachments: {
@@ -1564,8 +1564,90 @@ export const schemas = {
         allOf: [{ $ref: '#/components/schemas/Offer' }],
         nullable: true,
       },
+      replacement: {
+        allOf: [{ $ref: '#/components/schemas/ReplacementChatCard' }],
+        nullable: true,
+      },
       status: { type: 'string', enum: ['SENT', 'DELIVERED', 'READ'] },
       createdAt: timestamp,
+    },
+  },
+  ReplacementChatCard: {
+    type: 'object',
+    required: [
+      'id',
+      'inrRequestId',
+      'status',
+      'displayState',
+      'initiatorRole',
+      'quantity',
+      'availableActions',
+      'product',
+      'shipment',
+      'createdAt',
+      'updatedAt',
+    ],
+    properties: {
+      id: objectId,
+      inrRequestId: objectId,
+      status: {
+        type: 'string',
+        enum: [
+          'PROPOSED',
+          'ACCEPTED',
+          'FULFILLING',
+          'COMPLETED',
+          'DECLINED',
+          'CANCELLED',
+          'FAILED',
+        ],
+      },
+      displayState: {
+        type: 'string',
+        enum: [
+          'PROPOSED',
+          'ACCEPTED',
+          'FULFILLING',
+          'COMPLETED',
+          'DECLINED',
+          'CANCELLED',
+          'FAILED',
+          'REFUND_REQUESTED',
+        ],
+      },
+      initiatorRole: { type: 'string', enum: ['BUYER', 'SELLER'] },
+      quantity: { type: 'integer', minimum: 1 },
+      availableActions: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: ['ACCEPT', 'DECLINE', 'REFUND_INSTEAD'],
+        },
+      },
+      product: {
+        type: 'object',
+        required: ['id', 'title', 'image'],
+        properties: {
+          id: { type: 'string', nullable: true },
+          title: { type: 'string', nullable: true },
+          image: { type: 'string', nullable: true },
+        },
+      },
+      shipment: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['READY_FOR_PICKUP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'],
+          },
+          estimatedDeliveryAt: nullableTimestamp,
+          pickedUpAt: nullableTimestamp,
+          deliveredAt: nullableTimestamp,
+        },
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
     },
   },
   CreateConversationRequest: {

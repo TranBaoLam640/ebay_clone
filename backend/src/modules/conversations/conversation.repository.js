@@ -64,6 +64,12 @@ export const listForUser = (userId, sellerIds, { limit, before }) => {
 export const addMessage = (data, session) =>
   Message.create([data], { session });
 
+export const findMessageByReplacementId = (replacementId, session) =>
+  Message.findOne({ replacementId })
+    .populate('senderId', 'email fullName avatarUrl')
+    .session(session || null)
+    .lean();
+
 export const findByClientMessageId = ({
   conversationId,
   senderId,
@@ -99,6 +105,7 @@ export const listMessages = ({ conversationId, limit, before }) => {
     .limit(limit)
     .populate('senderId', 'email fullName avatarUrl')
     .populate('offerId')
+    .populate('replacementId')
     .lean();
 };
 

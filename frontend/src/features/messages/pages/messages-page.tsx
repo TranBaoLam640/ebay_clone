@@ -1,42 +1,44 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button } from '@/components/button';
-import { EmptyState } from '@/components/empty-state';
-import { Icon } from '@/components/icon';
-import { Input } from '@/components/input';
-import { Modal } from '@/components/modal';
-import { Price } from '@/components/price';
-import { Skeleton } from '@/components/skeleton';
-import { Textarea } from '@/components/textarea';
-import { useAuth } from '@/features/auth/hooks/use-auth';
-import { messageFromError } from '@/features/auth/utils/auth-errors';
-import { useToast } from '@/contexts/toast-context';
-import { cartApi } from '@/features/cart/services/cart-api';
-import { paths } from '@/routes/paths';
-import { cn } from '@/utils/cn';
-import { formatDate } from '@/utils/format-date';
-import { useChatSocket } from '../hooks/use-chat-socket';
-import type { ConversationUpdatedPayload } from '../hooks/use-chat-socket';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/button";
+import { EmptyState } from "@/components/empty-state";
+import { Icon } from "@/components/icon";
+import { Input } from "@/components/input";
+import { Modal } from "@/components/modal";
+import { Price } from "@/components/price";
+import { Skeleton } from "@/components/skeleton";
+import { Textarea } from "@/components/textarea";
+import { useAuth } from "@/features/auth/hooks/use-auth";
+import { messageFromError } from "@/features/auth/utils/auth-errors";
+import { useToast } from "@/contexts/toast-context";
+import { cartApi } from "@/features/cart/services/cart-api";
+import { paths } from "@/routes/paths";
+import { cn } from "@/utils/cn";
+import { formatDate } from "@/utils/format-date";
+import { useChatSocket } from "../hooks/use-chat-socket";
+import type { ConversationUpdatedPayload } from "../hooks/use-chat-socket";
 import {
   messagingApi,
   type ConversationMessage,
   type ConversationSummary,
   type MessageAttachment,
   type OfferPayload,
-} from '../services/messaging-api';
+  type ReplacementAction,
+  type ReplacementPayload,
+} from "../services/messaging-api";
 
 const PAGE_SIZE = 30;
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_MIMES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'application/pdf',
-  'text/plain',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 
 function compareMessages(
@@ -49,7 +51,7 @@ function compareMessages(
 }
 
 function normalizeId(value: string | null | undefined) {
-  return value ? String(value) : '';
+  return value ? String(value) : "";
 }
 
 function isOwnMessage(
@@ -67,12 +69,12 @@ function sameSender(
 }
 
 function formatMessageTime(iso: string | null | undefined) {
-  if (!iso) return '';
+  if (!iso) return "";
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
     hour12: false,
   }).format(date);
 }
@@ -81,7 +83,7 @@ interface LocalAttachment {
   id: string;
   file: File;
   previewUrl: string | null;
-  type: 'IMAGE' | 'FILE';
+  type: "IMAGE" | "FILE";
 }
 
 export default function MessagesPage() {
@@ -90,12 +92,15 @@ export default function MessagesPage() {
   const { notify } = useToast();
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
-  const selectedId = search.get('conversation');
+  const selectedId = search.get("conversation");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [hasOlder, setHasOlder] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [typingUser, setTypingUser] = useState<string | null>(null);
   const [pendingOfferId, setPendingOfferId] = useState<string | null>(null);
+  const [pendingReplacementId, setPendingReplacementId] = useState<
+    string | null
+  >(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const typingTimer = useRef<number | null>(null);
   const isNearBottom = useCallback(() => {
@@ -103,7 +108,7 @@ export default function MessagesPage() {
     if (!box) return true;
     return box.scrollHeight - box.scrollTop - box.clientHeight < 96;
   }, []);
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({
         top: scrollRef.current.scrollHeight,
@@ -113,7 +118,7 @@ export default function MessagesPage() {
   }, []);
 
   const conversations = useQuery({
-    queryKey: ['conversations'],
+    queryKey: ["conversations"],
     queryFn: () => messagingApi.conversations({ limit: 50 }),
   });
   const selected =
@@ -136,14 +141,14 @@ export default function MessagesPage() {
           !(
             (incoming.clientMessageId &&
               message.clientMessageId === incoming.clientMessageId) ||
-            (message.localStatus === 'sending' &&
+            (message.localStatus === "sending" &&
               message.content === incoming.content &&
               message.senderId === incoming.senderId)
           ),
       );
       const canonical: ConversationMessage = {
         ...incoming,
-        localStatus: 'sent',
+        localStatus: "sent",
       };
       return [...withoutTemp, canonical].sort(compareMessages);
     });
@@ -157,9 +162,37 @@ export default function MessagesPage() {
     );
   }, []);
 
+  const updateReplacementInMessages = useCallback(
+    (replacement: ReplacementPayload) => {
+      setMessages((current) =>
+        current.map((message) =>
+          message.replacement?.id === replacement.id
+            ? { ...message, replacement }
+            : message,
+        ),
+      );
+    },
+    [],
+  );
+
+  const refreshSelectedMessages = useCallback(() => {
+    if (!selectedId) return Promise.resolve();
+    return messagingApi
+      .messages(selectedId, { limit: PAGE_SIZE })
+      .then((items) => {
+        setMessages((current) => {
+          const latest = new Map(
+            current.map((message) => [message.id, message]),
+          );
+          for (const item of items) latest.set(item.id, item);
+          return [...latest.values()].sort(compareMessages);
+        });
+      });
+  }, [selectedId]);
+
   const updateConversationFromMessage = useCallback(
     (message: ConversationMessage) => {
-      qc.setQueryData<ConversationSummary[]>(['conversations'], (current) => {
+      qc.setQueryData<ConversationSummary[]>(["conversations"], (current) => {
         if (!current) return current;
         const updated = current.map((conversation) =>
           conversation.id === message.conversationId
@@ -193,7 +226,7 @@ export default function MessagesPage() {
 
   const mergeConversationUpdate = useCallback(
     (payload: ConversationUpdatedPayload) => {
-      qc.setQueryData<ConversationSummary[]>(['conversations'], (current) =>
+      qc.setQueryData<ConversationSummary[]>(["conversations"], (current) =>
         current
           ?.map((conversation) =>
             conversation.id === payload.id
@@ -228,7 +261,8 @@ export default function MessagesPage() {
           message.conversationId === selectedId && isNearBottom();
         if (message.conversationId === selectedId) {
           mergeMessage(message);
-          if (shouldScroll) scrollToBottom('smooth');
+          if (message.type === "REPLACEMENT") void refreshSelectedMessages();
+          if (shouldScroll) scrollToBottom("smooth");
         }
         updateConversationFromMessage(message);
       },
@@ -238,6 +272,7 @@ export default function MessagesPage() {
         scrollToBottom,
         selectedId,
         updateConversationFromMessage,
+        refreshSelectedMessages,
       ],
     ),
     onOfferNew: useCallback(
@@ -258,13 +293,20 @@ export default function MessagesPage() {
       },
       [updateOfferInMessages],
     ),
+    onReplacementUpdated: useCallback(
+      (payload) => {
+        if (payload.conversationId === selectedId)
+          void refreshSelectedMessages();
+      },
+      [refreshSelectedMessages, selectedId],
+    ),
     onRead: useCallback(
       (payload) => {
         if (payload.conversationId === selectedId) {
           setMessages((current) =>
             current.map((message) =>
               normalizeId(message.senderId) === normalizeId(currentUserId)
-                ? { ...message, status: 'READ' }
+                ? { ...message, status: "READ" }
                 : message,
             ),
           );
@@ -313,7 +355,7 @@ export default function MessagesPage() {
         return messagingApi.markRead(selectedId);
       })
       .then(() => {
-        qc.setQueryData<ConversationSummary[]>(['conversations'], (current) =>
+        qc.setQueryData<ConversationSummary[]>(["conversations"], (current) =>
           current?.map((conversation) =>
             conversation.id === selectedId
               ? { ...conversation, unreadCount: 0 }
@@ -321,7 +363,7 @@ export default function MessagesPage() {
           ),
         );
       })
-      .catch((err) => notify(messageFromError(err), 'error'));
+      .catch((err) => notify(messageFromError(err), "error"));
   }, [notify, qc, selectedId]);
 
   useEffect(() => {
@@ -381,7 +423,7 @@ export default function MessagesPage() {
       attachments: LocalAttachment[];
       restoreDraft?: () => void;
     }) => {
-      if (!selectedId) throw new Error('No conversation selected');
+      if (!selectedId) throw new Error("No conversation selected");
       const uploaded = attachments.length
         ? await messagingApi.uploadAttachments(
             selectedId,
@@ -403,7 +445,7 @@ export default function MessagesPage() {
       setMessages((current) =>
         current.map((message) =>
           message.clientMessageId === clientMessageId
-            ? { ...message, localStatus: 'sending' }
+            ? { ...message, localStatus: "sending" }
             : message,
         ),
       );
@@ -416,7 +458,7 @@ export default function MessagesPage() {
               ? ({
                   ...saved,
                   clientMessageId,
-                  localStatus: 'sent',
+                  localStatus: "sent",
                 } satisfies ConversationMessage)
               : message,
           )
@@ -428,7 +470,7 @@ export default function MessagesPage() {
       setMessages((current) =>
         current.map((message) =>
           message.clientMessageId === variables.clientMessageId
-            ? { ...message, localStatus: 'failed' }
+            ? { ...message, localStatus: "failed" }
             : message,
         ),
       );
@@ -438,18 +480,18 @@ export default function MessagesPage() {
 
   const offerAction = useMutation({
     mutationFn: (action: {
-      kind: 'make' | 'accept' | 'decline' | 'counter' | 'retract';
+      kind: "make" | "accept" | "decline" | "counter" | "retract";
       offerId?: string;
       price?: number;
       quantity?: number;
     }) => {
-      if (action.kind === 'accept')
+      if (action.kind === "accept")
         return messagingApi.acceptOffer(action.offerId!);
-      if (action.kind === 'decline')
+      if (action.kind === "decline")
         return messagingApi.declineOffer(action.offerId!);
-      if (action.kind === 'retract')
+      if (action.kind === "retract")
         return messagingApi.retractOffer(action.offerId!);
-      if (action.kind === 'counter') {
+      if (action.kind === "counter") {
         return messagingApi.counterOffer(action.offerId!, {
           price: action.price!,
           quantity: action.quantity,
@@ -461,11 +503,11 @@ export default function MessagesPage() {
       });
     },
     onMutate: (action) => {
-      setPendingOfferId(action.offerId ?? 'new');
+      setPendingOfferId(action.offerId ?? "new");
     },
     onSuccess: (offer, action) => {
       updateOfferInMessages(offer);
-      if (selectedId && (action.kind === 'make' || action.kind === 'counter')) {
+      if (selectedId && (action.kind === "make" || action.kind === "counter")) {
         messagingApi
           .messages(selectedId, { limit: PAGE_SIZE })
           .then((items) => {
@@ -480,7 +522,7 @@ export default function MessagesPage() {
       }
     },
     onError: (err) => {
-      notify(messageFromError(err), 'error');
+      notify(messageFromError(err), "error");
       if (selectedId) {
         messagingApi
           .messages(selectedId, { limit: PAGE_SIZE })
@@ -498,6 +540,32 @@ export default function MessagesPage() {
     onSettled: () => setPendingOfferId(null),
   });
 
+  const replacementAction = useMutation({
+    mutationFn: (action: {
+      kind: ReplacementAction;
+      replacementId: string;
+      requestId: string;
+    }) => {
+      if (action.kind === "ACCEPT")
+        return messagingApi.acceptReplacement(action.replacementId);
+      if (action.kind === "DECLINE")
+        return messagingApi.declineReplacement(action.replacementId);
+      return messagingApi
+        .refundInstead(action.requestId)
+        .then(() => refreshSelectedMessages())
+        .then(() => null);
+    },
+    onMutate: (action) => setPendingReplacementId(action.replacementId),
+    onSuccess: (replacement) => {
+      if (replacement) updateReplacementInMessages(replacement);
+    },
+    onError: (err) => {
+      notify(messageFromError(err), "error");
+      void refreshSelectedMessages();
+    },
+    onSettled: () => setPendingReplacementId(null),
+  });
+
   const handleScroll = () => {
     if (scrollRef.current && scrollRef.current.scrollTop < 80) loadOlder();
   };
@@ -506,16 +574,16 @@ export default function MessagesPage() {
   const hasBlockingOffer = selectedMessages.some(
     (message) =>
       message.offer?.conversationId === selectedId &&
-      (message.offer.status === 'PENDING' ||
-        message.offer.status === 'ACCEPTED'),
+      (message.offer.status === "PENDING" ||
+        message.offer.status === "ACCEPTED"),
   );
   const listingEligibleForOffer =
     selected?.product.offersEnabled === true &&
-    selected.product.status === 'ACTIVE' &&
+    selected.product.status === "ACTIVE" &&
     (selected.product.stock ?? 0) > 0 &&
-    (selected.product.listingType ?? 'FIXED') === 'FIXED';
+    (selected.product.listingType ?? "FIXED") === "FIXED";
   const canMakeOffer =
-    selected?.role === 'BUYER' && listingEligibleForOffer && !hasBlockingOffer;
+    selected?.role === "BUYER" && listingEligibleForOffer && !hasBlockingOffer;
 
   return (
     <div className="mx-auto flex h-[calc(100vh-112px)] max-w-[1180px] flex-col px-4 py-5">
@@ -525,11 +593,11 @@ export default function MessagesPage() {
           <p className="mt-0.5 flex items-center gap-1.5 text-sm text-muted">
             <span
               className={cn(
-                'h-2 w-2 rounded-full',
-                socket.connected ? 'bg-success' : 'bg-warning',
+                "h-2 w-2 rounded-full",
+                socket.connected ? "bg-success" : "bg-warning",
               )}
             />
-            {socket.connected ? 'Realtime connected' : 'Realtime reconnecting'}
+            {socket.connected ? "Realtime connected" : "Realtime reconnecting"}
           </p>
         </div>
       </div>
@@ -538,8 +606,8 @@ export default function MessagesPage() {
         <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]">
           <aside
             className={cn(
-              'min-h-0 border-border bg-surface md:border-r',
-              selectedId && 'hidden md:block',
+              "min-h-0 border-border bg-surface md:border-r",
+              selectedId && "hidden md:block",
             )}
           >
             <div className="border-b border-border px-4 py-3">
@@ -571,7 +639,7 @@ export default function MessagesPage() {
             )}
           </aside>
 
-          <main className={cn('min-h-0', !selectedId && 'hidden md:block')}>
+          <main className={cn("min-h-0", !selectedId && "hidden md:block")}>
             {selected ? (
               <div className="flex h-full min-h-0 flex-col">
                 <ChatHeader
@@ -615,6 +683,9 @@ export default function MessagesPage() {
                             )}
                             conversation={selected}
                             offerLoading={pendingOfferId === message.offer?.id}
+                            replacementLoading={
+                              pendingReplacementId === message.replacement?.id
+                            }
                             onRetry={() => {
                               if (!message.content || !message.clientMessageId)
                                 return;
@@ -628,6 +699,9 @@ export default function MessagesPage() {
                             }}
                             onOfferAction={(action) =>
                               offerAction.mutate(action)
+                            }
+                            onReplacementAction={(action) =>
+                              replacementAction.mutate(action)
                             }
                             onBuyOffer={async (offer) => {
                               try {
@@ -648,12 +722,12 @@ export default function MessagesPage() {
                                     quantity,
                                   );
                                 }
-                                qc.invalidateQueries({ queryKey: ['cart'] });
+                                qc.invalidateQueries({ queryKey: ["cart"] });
                                 navigate(
                                   `${paths.checkout}?offerId=${offer.id}&productId=${selected.product.id}`,
                                 );
                               } catch (err) {
-                                notify(messageFromError(err), 'error');
+                                notify(messageFromError(err), "error");
                               }
                             }}
                           />
@@ -688,7 +762,7 @@ export default function MessagesPage() {
                     const clientMessageId = crypto.randomUUID();
                     const optimisticAttachments = attachments.map(
                       (attachment) => ({
-                        url: attachment.previewUrl || '',
+                        url: attachment.previewUrl || "",
                         fileName: attachment.file.name,
                         mimeType: attachment.file.type,
                         size: attachment.file.size,
@@ -703,14 +777,14 @@ export default function MessagesPage() {
                       sender: {
                         id: currentUserId!,
                         displayName: user!.fullName,
-                        username: user!.email.split('@')[0],
+                        username: user!.email.split("@")[0],
                         avatarUrl: user!.avatarUrl,
                       },
                       type: messageTypeFor(optimisticAttachments),
                       content,
                       attachments: optimisticAttachments,
-                      status: 'SENT',
-                      localStatus: 'sending',
+                      status: "SENT",
+                      localStatus: "sending",
                       createdAt: new Date().toISOString(),
                     };
                     setMessages((current) => [...current, optimistic]);
@@ -728,7 +802,7 @@ export default function MessagesPage() {
                   productStock={selected.product.stock ?? 1}
                   productPrice={selected.product.price}
                   onMakeOffer={(price, quantity) =>
-                    offerAction.mutate({ kind: 'make', price, quantity })
+                    offerAction.mutate({ kind: "make", price, quantity })
                   }
                   offerLoading={offerAction.isPending}
                 />
@@ -750,28 +824,28 @@ export default function MessagesPage() {
 }
 
 function messageTypeFor(
-  attachments: Pick<MessageAttachment, 'type' | 'mimeType'>[],
+  attachments: Pick<MessageAttachment, "type" | "mimeType">[],
 ) {
-  if (attachments.length === 0) return 'TEXT';
+  if (attachments.length === 0) return "TEXT";
   return attachments.some(
     (attachment) =>
-      attachment.type === 'FILE' || !attachment.mimeType.startsWith('image/'),
+      attachment.type === "FILE" || !attachment.mimeType.startsWith("image/"),
   )
-    ? 'FILE'
-    : 'IMAGE';
+    ? "FILE"
+    : "IMAGE";
 }
 
 function conversationParticipant(conversation: ConversationSummary) {
-  if (conversation.role === 'SELLER' && conversation.buyer)
+  if (conversation.role === "SELLER" && conversation.buyer)
     return conversation.buyer;
-  const emailUsername = conversation.seller.email?.split('@')[0];
+  const emailUsername = conversation.seller.email?.split("@")[0];
   return {
     ...conversation.seller,
     displayName:
       conversation.seller.username ||
       emailUsername ||
       conversation.seller.displayName ||
-      'Seller',
+      "Seller",
   };
 }
 
@@ -780,11 +854,11 @@ function messageSenderLabel(
   conversation: ConversationSummary,
   own: boolean,
 ) {
-  if (own) return 'You';
+  if (own) return "You";
   if (message.sender?.displayName) return message.sender.displayName;
   if (message.sender?.username) return message.sender.username;
   if (normalizeId(message.senderId) === normalizeId(conversation.buyer?.id)) {
-    return conversation.buyer?.displayName || 'Buyer';
+    return conversation.buyer?.displayName || "Buyer";
   }
   return conversationParticipant(conversation).displayName;
 }
@@ -799,17 +873,17 @@ function ConversationRow({
   onClick: () => void;
 }) {
   const preview =
-    conversation.lastMessage?.type === 'OFFER'
-      ? 'Offer update'
-      : conversation.lastMessage?.content || 'No messages yet';
+    conversation.lastMessage?.type === "OFFER"
+      ? "Offer update"
+      : conversation.lastMessage?.content || "No messages yet";
   const participant = conversationParticipant(conversation);
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'flex w-full gap-3 border-b border-border px-3 py-3 text-left transition-colors hover:bg-surface-2/70',
-        active && 'bg-surface-2 shadow-[inset_3px_0_0_var(--color-primary)]',
+        "flex w-full gap-3 border-b border-border px-3 py-3 text-left transition-colors hover:bg-surface-2/70",
+        active && "bg-surface-2 shadow-[inset_3px_0_0_var(--color-primary)]",
       )}
     >
       <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-surface-2">
@@ -921,8 +995,10 @@ function MessageBubble({
   senderLabel,
   conversation,
   offerLoading,
+  replacementLoading,
   onRetry,
   onOfferAction,
+  onReplacementAction,
   onBuyOffer,
 }: {
   message: ConversationMessage;
@@ -931,42 +1007,48 @@ function MessageBubble({
   senderLabel: string;
   conversation: ConversationSummary;
   offerLoading: boolean;
+  replacementLoading: boolean;
   onRetry: () => void;
   onOfferAction: (action: {
-    kind: 'accept' | 'decline' | 'counter' | 'retract';
+    kind: "accept" | "decline" | "counter" | "retract";
     offerId: string;
     price?: number;
     quantity?: number;
   }) => void;
+  onReplacementAction: (action: {
+    kind: ReplacementAction;
+    replacementId: string;
+    requestId: string;
+  }) => void;
   onBuyOffer: (offer: OfferPayload) => void;
 }) {
   const metaText =
-    message.localStatus === 'sending'
-      ? 'Sending...'
-      : message.localStatus === 'failed'
-        ? 'Failed'
-        : message.status === 'READ'
-          ? 'Read'
-          : 'Sent';
+    message.localStatus === "sending"
+      ? "Sending..."
+      : message.localStatus === "failed"
+        ? "Failed"
+        : message.status === "READ"
+          ? "Read"
+          : "Sent";
   return (
     <div
       className={cn(
-        'flex w-full flex-col',
-        own ? 'items-end' : 'items-start',
-        compactWithPrevious ? 'mt-[-0.25rem]' : 'mt-2',
+        "flex w-full flex-col",
+        own ? "items-end" : "items-start",
+        compactWithPrevious ? "mt-[-0.25rem]" : "mt-2",
       )}
     >
       {!compactWithPrevious && (
         <p
           className={cn(
-            'mb-1 px-1 text-xs font-semibold text-muted',
-            own ? 'text-right' : 'text-left',
+            "mb-1 px-1 text-xs font-semibold text-muted",
+            own ? "text-right" : "text-left",
           )}
         >
           {senderLabel}
         </p>
       )}
-      {message.type === 'OFFER' && message.offer ? (
+      {message.type === "OFFER" && message.offer ? (
         <OfferCard
           offer={message.offer}
           conversation={conversation}
@@ -975,13 +1057,21 @@ function MessageBubble({
           onAction={onOfferAction}
           onBuy={onBuyOffer}
         />
+      ) : message.type === "REPLACEMENT" && message.replacement ? (
+        <ReplacementCard
+          replacement={message.replacement}
+          conversation={conversation}
+          own={own}
+          loading={replacementLoading}
+          onAction={onReplacementAction}
+        />
       ) : (
         <div
           className={cn(
-            'max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[72%]',
+            "max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[72%]",
             own
-              ? 'rounded-br-md bg-primary text-white'
-              : 'rounded-bl-md border border-border bg-surface text-text',
+              ? "rounded-br-md bg-primary text-white"
+              : "rounded-bl-md border border-border bg-surface text-text",
           )}
         >
           {message.content && (
@@ -990,20 +1080,20 @@ function MessageBubble({
           {message.attachments.length > 0 && (
             <AttachmentList attachments={message.attachments} own={own} />
           )}
-          {message.type === 'SYSTEM' ? (
+          {message.type === "SYSTEM" ? (
             <p className="text-muted">{message.content}</p>
           ) : null}
           <div
             className={cn(
-              'mt-1.5 flex items-center gap-2 text-[11px]',
-              own ? 'justify-end text-white/75' : 'justify-start text-muted',
+              "mt-1.5 flex items-center gap-2 text-[11px]",
+              own ? "justify-end text-white/75" : "justify-start text-muted",
             )}
           >
             <span>
               {formatMessageTime(message.createdAt)}
-              {own ? ` ${metaText}` : ''}
+              {own ? ` ${metaText}` : ""}
             </span>
-            {message.localStatus === 'failed' && (
+            {message.localStatus === "failed" && (
               <button
                 type="button"
                 onClick={onRetry}
@@ -1031,22 +1121,22 @@ function AttachmentList({
     <>
       <div className="mt-2 flex max-w-full flex-wrap gap-2">
         {attachments.map((attachment, index) =>
-          attachment.type === 'IMAGE' ||
-          attachment.mimeType.startsWith('image/') ? (
+          attachment.type === "IMAGE" ||
+          attachment.mimeType.startsWith("image/") ? (
             <button
               key={`${attachment.url}-${index}`}
               type="button"
               onClick={() => attachment.url && setPreview(attachment)}
               className={cn(
-                'overflow-hidden rounded-lg border',
+                "overflow-hidden rounded-lg border",
                 own
-                  ? 'border-white/20 bg-white/10'
-                  : 'border-border bg-surface-2',
+                  ? "border-white/20 bg-white/10"
+                  : "border-border bg-surface-2",
               )}
             >
               <img
                 src={attachment.url}
-                alt={attachment.fileName || 'Image attachment'}
+                alt={attachment.fileName || "Image attachment"}
                 loading="lazy"
                 className="h-28 w-28 object-cover sm:h-32 sm:w-32"
               />
@@ -1058,27 +1148,27 @@ function AttachmentList({
               target="_blank"
               rel="noreferrer"
               className={cn(
-                'flex min-w-[220px] max-w-full flex-col gap-1 rounded-lg border p-3',
+                "flex min-w-[220px] max-w-full flex-col gap-1 rounded-lg border p-3",
                 own
-                  ? 'border-white/20 bg-white/10 text-white'
-                  : 'border-border bg-surface text-text',
+                  ? "border-white/20 bg-white/10 text-white"
+                  : "border-border bg-surface text-text",
               )}
             >
               <span className="flex min-w-0 items-center gap-2 font-semibold">
                 <Icon variant="icon-package" size={16} />
                 <span className="truncate">
-                  {attachment.fileName || 'File attachment'}
+                  {attachment.fileName || "File attachment"}
                 </span>
               </span>
               <span
-                className={cn('text-xs', own ? 'text-white/75' : 'text-muted')}
+                className={cn("text-xs", own ? "text-white/75" : "text-muted")}
               >
                 {fileKind(attachment)} · {formatBytes(attachment.size)}
               </span>
               <span
                 className={cn(
-                  'text-xs font-semibold',
-                  own ? 'text-white' : 'text-primary',
+                  "text-xs font-semibold",
+                  own ? "text-white" : "text-primary",
                 )}
               >
                 View / Download
@@ -1090,13 +1180,13 @@ function AttachmentList({
       <Modal
         open={!!preview}
         onClose={() => setPreview(null)}
-        title={preview?.fileName || 'Image preview'}
+        title={preview?.fileName || "Image preview"}
         size="lg"
       >
         {preview && (
           <img
             src={preview.url}
-            alt={preview.fileName || 'Image attachment'}
+            alt={preview.fileName || "Image attachment"}
             className="max-h-[70vh] w-full object-contain"
           />
         )}
@@ -1107,17 +1197,193 @@ function AttachmentList({
 
 function fileKind(attachment: MessageAttachment) {
   return (
-    attachment.fileName?.split('.').pop() ||
+    attachment.fileName?.split(".").pop() ||
     attachment.mimeType ||
-    'file'
+    "file"
   ).toUpperCase();
 }
 
 function formatBytes(size?: number) {
-  if (!size) return 'unknown size';
+  if (!size) return "unknown size";
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function ReplacementCard({
+  replacement,
+  conversation,
+  own,
+  loading,
+  onAction,
+}: {
+  replacement: ReplacementPayload;
+  conversation: ConversationSummary;
+  own: boolean;
+  loading: boolean;
+  onAction: (action: {
+    kind: ReplacementAction;
+    replacementId: string;
+    requestId: string;
+  }) => void;
+}) {
+  const isBuyerView = conversation.role === "BUYER";
+  const actorLabel =
+    replacement.initiatorRole === "SELLER" ? "Seller" : "Buyer";
+  const title =
+    replacement.displayState === "PROPOSED"
+      ? replacement.initiatorRole === "SELLER"
+        ? own
+          ? "Replacement offered."
+          : "Seller offered a replacement."
+        : own
+          ? "Replacement requested."
+          : "Buyer requested a replacement."
+      : replacement.displayState === "REFUND_REQUESTED"
+        ? isBuyerView
+          ? "You requested a refund instead."
+          : "Buyer requested a refund instead."
+        : replacement.displayState === "ACCEPTED"
+          ? "Replacement accepted."
+          : replacement.displayState === "FULFILLING"
+            ? replacement.shipment?.status === "DELIVERED"
+              ? isBuyerView
+                ? "Your replacement was delivered."
+                : "Replacement was delivered."
+              : replacement.shipment?.status === "IN_TRANSIT"
+                ? isBuyerView
+                  ? "Your replacement is in transit."
+                  : "Replacement is in transit."
+                : "Replacement is being prepared for shipment."
+            : replacement.displayState === "DECLINED"
+              ? "Replacement declined."
+              : replacement.displayState === "CANCELLED"
+                ? "Replacement cancelled."
+                : replacement.displayState === "FAILED"
+                  ? "Replacement could not be completed."
+                  : "Replacement completed.";
+  const detail =
+    replacement.displayState === "PROPOSED"
+      ? own
+        ? `Waiting for ${conversation.role === "BUYER" ? "seller" : "buyer"} response.`
+        : "Review the replacement request."
+      : replacement.displayState === "ACCEPTED"
+        ? replacement.shipment?.status === "READY_FOR_PICKUP"
+          ? "The seller is preparing your replacement shipment."
+          : "Waiting for the seller to prepare it."
+        : null;
+
+  return (
+    <div
+      className={cn(
+        "w-full max-w-md rounded-2xl border p-4 text-sm shadow-sm",
+        own
+          ? "rounded-br-md border-primary bg-primary text-white"
+          : "rounded-bl-md border-border bg-surface text-text",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        {replacement.product.image ? (
+          <img
+            src={replacement.product.image}
+            alt={replacement.product.title || "Replacement item"}
+            className="h-14 w-14 shrink-0 rounded-md object-cover"
+          />
+        ) : (
+          <span
+            className={cn(
+              "flex h-14 w-14 shrink-0 items-center justify-center rounded-md",
+              own ? "bg-white/15" : "bg-surface-2",
+            )}
+          >
+            <Icon variant="icon-refresh" size={22} />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="font-semibold">{title}</p>
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase",
+                own ? "bg-white/15 text-white" : "bg-surface-2 text-muted",
+              )}
+            >
+              {actorLabel}
+            </span>
+          </div>
+          <p className={cn("mt-1 truncate", own ? "text-white" : "text-text")}>
+            {replacement.product.title || conversation.product.title}
+          </p>
+          <p
+            className={cn("mt-1 text-sm", own ? "text-white/75" : "text-muted")}
+          >
+            Quantity: {replacement.quantity}
+          </p>
+          {detail && (
+            <p
+              className={cn(
+                "mt-2 text-sm",
+                own ? "text-white/75" : "text-muted",
+              )}
+            >
+              {detail}
+            </p>
+          )}
+        </div>
+      </div>
+      {replacement.availableActions.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {replacement.availableActions.includes("ACCEPT") && (
+            <Button
+              size="sm"
+              loading={loading}
+              onClick={() =>
+                onAction({
+                  kind: "ACCEPT",
+                  replacementId: replacement.id,
+                  requestId: replacement.inrRequestId,
+                })
+              }
+            >
+              Accept replacement
+            </Button>
+          )}
+          {replacement.availableActions.includes("DECLINE") && (
+            <Button
+              size="sm"
+              variant="danger"
+              loading={loading}
+              onClick={() =>
+                onAction({
+                  kind: "DECLINE",
+                  replacementId: replacement.id,
+                  requestId: replacement.inrRequestId,
+                })
+              }
+            >
+              Decline
+            </Button>
+          )}
+          {replacement.availableActions.includes("REFUND_INSTEAD") && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={loading}
+              onClick={() =>
+                onAction({
+                  kind: "REFUND_INSTEAD",
+                  replacementId: replacement.id,
+                  requestId: replacement.inrRequestId,
+                })
+              }
+            >
+              I want a refund instead
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function OfferCard({
@@ -1133,7 +1399,7 @@ function OfferCard({
   own: boolean;
   loading: boolean;
   onAction: (action: {
-    kind: 'accept' | 'decline' | 'counter' | 'retract';
+    kind: "accept" | "decline" | "counter" | "retract";
     offerId: string;
     price?: number;
     quantity?: number;
@@ -1142,63 +1408,63 @@ function OfferCard({
 }) {
   const [counterOpen, setCounterOpen] = useState(false);
   const [retractOpen, setRetractOpen] = useState(false);
-  const [counter, setCounter] = useState('');
+  const [counter, setCounter] = useState("");
   const [counterQuantity, setCounterQuantity] = useState(
     String(offer.quantity ?? 1),
   );
-  const canAct = offer.status === 'PENDING' && !own;
-  const canRetract = offer.status === 'PENDING' && own;
-  const canBuy = offer.status === 'ACCEPTED' && conversation.role === 'BUYER';
+  const canAct = offer.status === "PENDING" && !own;
+  const canRetract = offer.status === "PENDING" && own;
+  const canBuy = offer.status === "ACCEPTED" && conversation.role === "BUYER";
   const orderId = offer.orderId ?? conversation.orderId;
 
   useEffect(() => {
-    if (offer.status !== 'PENDING') setCounterOpen(false);
+    if (offer.status !== "PENDING") setCounterOpen(false);
   }, [offer.status]);
 
   const isCounter = Boolean(offer.parentOfferId);
   const displayStatus =
-    offer.status === 'WITHDRAWN' ? 'RETRACTED' : offer.status;
-  const proposalLabel = isCounter ? 'counteroffer' : 'offer';
+    offer.status === "WITHDRAWN" ? "RETRACTED" : offer.status;
+  const proposalLabel = isCounter ? "counteroffer" : "offer";
   const senderLabel =
-    String(offer.createdBy) === String(offer.buyerId) ? 'buyer' : 'seller';
+    String(offer.createdBy) === String(offer.buyerId) ? "buyer" : "seller";
   const senderBadge = own
-    ? 'You'
-    : senderLabel === 'buyer'
-      ? 'Buyer'
-      : 'Seller';
-  const mutedText = own ? 'text-white/75' : 'text-muted';
-  const strongText = own ? 'text-white' : 'text-text';
-  const priceText = own ? 'text-white' : undefined;
+    ? "You"
+    : senderLabel === "buyer"
+      ? "Buyer"
+      : "Seller";
+  const mutedText = own ? "text-white/75" : "text-muted";
+  const strongText = own ? "text-white" : "text-text";
+  const priceText = own ? "text-white" : undefined;
   const quantity = offer.quantity ?? 1;
   const unitPrice = offer.offerPrice ?? offer.amount ?? 0;
 
   return (
     <div
       className={cn(
-        'w-full max-w-md rounded-2xl border p-4 text-sm shadow-sm',
+        "w-full max-w-md rounded-2xl border p-4 text-sm shadow-sm",
         own
-          ? 'rounded-br-md border-primary bg-primary text-white'
-          : 'rounded-bl-md border-border bg-surface text-text',
+          ? "rounded-br-md border-primary bg-primary text-white"
+          : "rounded-bl-md border-border bg-surface text-text",
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <p className="font-semibold">
-          {offer.status === 'WITHDRAWN'
-            ? `${isCounter ? 'Counteroffer' : 'Offer'} retracted`
+          {offer.status === "WITHDRAWN"
+            ? `${isCounter ? "Counteroffer" : "Offer"} retracted`
             : own
               ? `Your ${proposalLabel}`
-              : `${isCounter ? 'Counteroffer' : 'Offer'} received`}
+              : `${isCounter ? "Counteroffer" : "Offer"} received`}
         </p>
         <span
           className={cn(
-            'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase',
-            own ? 'bg-white/15 text-white' : 'bg-surface-2 text-muted',
+            "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase",
+            own ? "bg-white/15 text-white" : "bg-surface-2 text-muted",
           )}
         >
           {senderBadge}
         </span>
       </div>
-      <p className={cn('mt-2 font-medium', strongText)}>
+      <p className={cn("mt-2 font-medium", strongText)}>
         {conversation.product.title}
       </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1221,20 +1487,20 @@ function OfferCard({
       </div>
       <p
         className={cn(
-          'mt-3 w-fit rounded-full px-2 py-1 text-xs font-bold',
-          own ? 'bg-white/15 text-white' : 'bg-surface-2 text-text',
+          "mt-3 w-fit rounded-full px-2 py-1 text-xs font-bold",
+          own ? "bg-white/15 text-white" : "bg-surface-2 text-text",
         )}
       >
         {displayStatus}
       </p>
-      {offer.status === 'PENDING' && own && (
-        <p className={cn('mt-2 text-sm', mutedText)}>
-          Awaiting {conversation.role === 'BUYER' ? 'seller' : 'buyer'}{' '}
+      {offer.status === "PENDING" && own && (
+        <p className={cn("mt-2 text-sm", mutedText)}>
+          Awaiting {conversation.role === "BUYER" ? "seller" : "buyer"}{" "}
           response.
         </p>
       )}
-      {offer.status === 'WITHDRAWN' && (
-        <p className={cn('mt-2 text-sm', mutedText)}>
+      {offer.status === "WITHDRAWN" && (
+        <p className={cn("mt-2 text-sm", mutedText)}>
           Retracted by {senderLabel}. This proposal is no longer actionable.
         </p>
       )}
@@ -1243,7 +1509,7 @@ function OfferCard({
           <Button
             size="sm"
             loading={loading}
-            onClick={() => onAction({ kind: 'accept', offerId: offer.id })}
+            onClick={() => onAction({ kind: "accept", offerId: offer.id })}
           >
             Accept
           </Button>
@@ -1259,7 +1525,7 @@ function OfferCard({
             size="sm"
             variant="danger"
             loading={loading}
-            onClick={() => onAction({ kind: 'decline', offerId: offer.id })}
+            onClick={() => onAction({ kind: "decline", offerId: offer.id })}
           >
             Decline
           </Button>
@@ -1277,15 +1543,15 @@ function OfferCard({
           </Button>
         </div>
       )}
-      {offer.status === 'ACCEPTED' && (
+      {offer.status === "ACCEPTED" && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <p
             className={cn(
-              'text-sm font-semibold',
-              own ? 'text-white' : 'text-success',
+              "text-sm font-semibold",
+              own ? "text-white" : "text-success",
             )}
           >
-            Offer accepted. Accepted price:{' '}
+            Offer accepted. Accepted price:{" "}
             <Price cents={unitPrice} className={priceText} /> each
           </p>
           {canBuy && (
@@ -1295,12 +1561,12 @@ function OfferCard({
           )}
         </div>
       )}
-      {offer.status === 'PURCHASED' && (
+      {offer.status === "PURCHASED" && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <p
             className={cn(
-              'text-sm font-semibold',
-              own ? 'text-white' : 'text-success',
+              "text-sm font-semibold",
+              own ? "text-white" : "text-success",
             )}
           >
             Purchased at <Price cents={unitPrice} className={priceText} /> each
@@ -1326,7 +1592,7 @@ function OfferCard({
             <Button
               onClick={() => {
                 onAction({
-                  kind: 'counter',
+                  kind: "counter",
                   offerId: offer.id,
                   price: Number(counter),
                   quantity: Number(counterQuantity),
@@ -1356,7 +1622,7 @@ function OfferCard({
               type="number"
               min={1}
               max={
-                conversation.role === 'SELLER'
+                conversation.role === "SELLER"
                   ? quantity
                   : (conversation.product.stock ?? quantity)
               }
@@ -1366,7 +1632,7 @@ function OfferCard({
             />
           )}
           <p className="text-sm text-muted">
-            Counter total:{' '}
+            Counter total:{" "}
             <Price
               cents={Number(counter || 0) * Number(counterQuantity || 1)}
             />
@@ -1386,7 +1652,7 @@ function OfferCard({
               variant="danger"
               loading={loading}
               onClick={() => {
-                onAction({ kind: 'retract', offerId: offer.id });
+                onAction({ kind: "retract", offerId: offer.id });
                 setRetractOpen(false);
               }}
             >
@@ -1432,11 +1698,11 @@ function Composer({
   offerLoading: boolean;
   sending: boolean;
 }) {
-  const [content, setContent] = useState('');
+  const [content, setContent] = useState("");
   const [copy, setCopy] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
-  const [offerPrice, setOfferPrice] = useState('');
-  const [offerQuantity, setOfferQuantity] = useState('1');
+  const [offerPrice, setOfferPrice] = useState("");
+  const [offerQuantity, setOfferQuantity] = useState("1");
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -1483,10 +1749,10 @@ function Composer({
       accepted.push({
         id: crypto.randomUUID(),
         file,
-        previewUrl: file.type.startsWith('image/')
+        previewUrl: file.type.startsWith("image/")
           ? URL.createObjectURL(file)
           : null,
-        type: file.type.startsWith('image/') ? 'IMAGE' : 'FILE',
+        type: file.type.startsWith("image/") ? "IMAGE" : "FILE",
       });
     }
     setAttachmentError(null);
@@ -1500,7 +1766,7 @@ function Composer({
     attachments.forEach((attachment) => {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     });
-    setContent('');
+    setContent("");
     setAttachments([]);
   };
   return (
@@ -1552,7 +1818,7 @@ function Composer({
           accept=".jpg,.jpeg,.png,.webp,.pdf,.txt,.doc,.docx"
           onChange={(event) => {
             addFiles(event.target.files);
-            event.target.value = '';
+            event.target.value = "";
           }}
         />
         <Button
@@ -1578,7 +1844,7 @@ function Composer({
               onTyping();
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 submit();
               }
@@ -1631,8 +1897,8 @@ function Composer({
               onClick={() => {
                 onMakeOffer(Number(offerPrice), Number(offerQuantity));
                 setOfferOpen(false);
-                setOfferPrice('');
-                setOfferQuantity('1');
+                setOfferPrice("");
+                setOfferQuantity("1");
               }}
               disabled={!Number(offerPrice) || !Number(offerQuantity)}
             >
@@ -1661,7 +1927,7 @@ function Composer({
             onChange={(e) => setOfferPrice(e.target.value)}
           />
           <p className="text-sm text-muted">
-            Offer total:{' '}
+            Offer total:{" "}
             <Price
               cents={Number(offerPrice || 0) * Number(offerQuantity || 1)}
             />

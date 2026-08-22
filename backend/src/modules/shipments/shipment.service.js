@@ -9,6 +9,7 @@ import * as inrRepository from '../inr-requests/inr-request.repository.js';
 import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
 import * as replacementRepository from '../replacements/replacement.repository.js';
+import { emitReplacementUpdate } from '../replacements/replacement-events.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
 import { SHIPMENT_CARRIERS, TRACKING_PREFIX } from './shipment.constants.js';
 import * as repository from './shipment.repository.js';
@@ -129,8 +130,9 @@ export const listForSeller = async (userId, query) => {
   return { items, meta: paginationMeta(page, limit, total) };
 };
 
-export const pickup = (shipperId, shipmentId) =>
-  checkoutRepository.transaction(async (session) => {
+export const pickup = async (shipperId, shipmentId) => {
+  let replacementId = null;
+  const claimed = await checkoutRepository.transaction(async (session) => {
     const existing = await repository.findInternalById(shipmentId, session);
     if (!existing) throw notFound();
     const pickedUpAt = new Date();
@@ -164,12 +166,17 @@ export const pickup = (shipperId, shipmentId) =>
       );
       if (!request)
         throw invalidState('Replacement resolution is no longer active');
+      replacementId = replacement._id;
     }
     return claimed;
   });
+  if (replacementId) await emitReplacementUpdate(replacementId);
+  return claimed;
+};
 
-export const deliver = (shipperId, shipmentId) =>
-  checkoutRepository.transaction(async (session) => {
+export const deliver = async (shipperId, shipmentId) => {
+  let replacementId = null;
+  const delivered = await checkoutRepository.transaction(async (session) => {
     const existing = await repository.findInternalById(shipmentId, session);
     if (!existing) throw notFound();
     if (
@@ -202,5 +209,10 @@ export const deliver = (shipperId, shipmentId) =>
         session,
       );
     }
+    if (existing.purpose === 'REPLACEMENT')
+      replacementId = existing.replacementId;
     return delivered;
   });
+  if (replacementId) await emitReplacementUpdate(replacementId);
+  return delivered;
+};

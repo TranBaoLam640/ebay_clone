@@ -1,21 +1,22 @@
-import { apiGet, apiMutate } from '@/services/api-client';
+import { apiGet, apiMutate } from "@/services/api-client";
 
-export type ConversationType = 'PRE_PURCHASE' | 'POST_PURCHASE';
-export type MessageType = 'TEXT' | 'IMAGE' | 'FILE' | 'OFFER' | 'SYSTEM';
+export type ConversationType = "PRE_PURCHASE" | "POST_PURCHASE";
+export type MessageType =
+  "TEXT" | "IMAGE" | "FILE" | "OFFER" | "REPLACEMENT" | "SYSTEM";
 export type OfferStatus =
-  | 'PENDING'
-  | 'ACCEPTED'
-  | 'DECLINED'
-  | 'COUNTERED'
-  | 'EXPIRED'
-  | 'WITHDRAWN'
-  | 'PURCHASED';
+  | "PENDING"
+  | "ACCEPTED"
+  | "DECLINED"
+  | "COUNTERED"
+  | "EXPIRED"
+  | "WITHDRAWN"
+  | "PURCHASED";
 
 export interface ConversationSummary {
   id: string;
   type: ConversationType;
-  status: 'ACTIVE' | 'ARCHIVED';
-  role: 'BUYER' | 'SELLER';
+  status: "ACTIVE" | "ARCHIVED";
+  role: "BUYER" | "SELLER";
   product: {
     id: string;
     title: string;
@@ -23,7 +24,7 @@ export interface ConversationSummary {
     price: number;
     status?: string;
     stock?: number;
-    listingType?: 'FIXED' | 'AUCTION';
+    listingType?: "FIXED" | "AUCTION";
     offersEnabled?: boolean;
   };
   seller: {
@@ -44,7 +45,7 @@ export interface ConversationSummary {
     id: string;
     type: MessageType;
     content: string | null;
-    status: 'SENT' | 'DELIVERED' | 'READ';
+    status: "SENT" | "DELIVERED" | "READ";
     createdAt: string;
   } | null;
   unreadCount: number;
@@ -71,12 +72,46 @@ export interface OfferPayload {
   createdAt: string;
 }
 
+export type ReplacementStatus =
+  | "PROPOSED"
+  | "ACCEPTED"
+  | "FULFILLING"
+  | "COMPLETED"
+  | "DECLINED"
+  | "CANCELLED"
+  | "FAILED";
+export type ReplacementDisplayState = ReplacementStatus | "REFUND_REQUESTED";
+export type ReplacementAction = "ACCEPT" | "DECLINE" | "REFUND_INSTEAD";
+
+export interface ReplacementPayload {
+  id: string;
+  inrRequestId: string;
+  status: ReplacementStatus;
+  displayState: ReplacementDisplayState;
+  initiatorRole: "BUYER" | "SELLER";
+  quantity: number;
+  availableActions: ReplacementAction[];
+  product: {
+    id: string | null;
+    title: string | null;
+    image: string | null;
+  };
+  shipment: {
+    status: "READY_FOR_PICKUP" | "IN_TRANSIT" | "DELIVERED" | "CANCELLED";
+    estimatedDeliveryAt: string | null;
+    pickedUpAt: string | null;
+    deliveredAt: string | null;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MessageAttachment {
   url: string;
   fileName?: string;
   mimeType: string;
   size?: number;
-  type?: 'IMAGE' | 'FILE';
+  type?: "IMAGE" | "FILE";
 }
 
 export interface ConversationMessage {
@@ -93,17 +128,18 @@ export interface ConversationMessage {
   content: string | null;
   attachments: MessageAttachment[];
   offer?: OfferPayload | null;
-  status: 'SENT' | 'DELIVERED' | 'READ';
+  replacement?: ReplacementPayload | null;
+  status: "SENT" | "DELIVERED" | "READ";
   createdAt: string;
   clientMessageId?: string;
-  localStatus?: 'sending' | 'sent' | 'failed';
+  localStatus?: "sending" | "sent" | "failed";
 }
 
 export const messagingApi = {
   conversations: (params?: { limit?: number; before?: string }) =>
-    apiGet<ConversationSummary[]>('/conversations', params),
+    apiGet<ConversationSummary[]>("/conversations", params),
   createConversation: (payload: { productId: string; orderId?: string }) =>
-    apiMutate<ConversationSummary>('post', '/conversations', payload),
+    apiMutate<ConversationSummary>("post", "/conversations", payload),
   messages: (
     conversationId: string,
     params?: { limit?: number; before?: string },
@@ -115,7 +151,7 @@ export const messagingApi = {
   sendMessage: (
     conversationId: string,
     payload: {
-      type?: 'TEXT' | 'IMAGE' | 'FILE';
+      type?: "TEXT" | "IMAGE" | "FILE";
       clientMessageId?: string;
       content?: string;
       attachments?: MessageAttachment[];
@@ -123,22 +159,22 @@ export const messagingApi = {
     },
   ) =>
     apiMutate<ConversationMessage>(
-      'post',
+      "post",
       `/conversations/${conversationId}/messages`,
       payload,
     ),
   uploadAttachments: (conversationId: string, files: File[]) => {
     const form = new FormData();
-    files.forEach((file) => form.append('files', file));
+    files.forEach((file) => form.append("files", file));
     return apiMutate<MessageAttachment[]>(
-      'post',
+      "post",
       `/conversations/${conversationId}/attachments`,
       form,
     );
   },
   markRead: (conversationId: string) =>
     apiMutate<{ id: string; unreadCount: number }>(
-      'patch',
+      "patch",
       `/conversations/${conversationId}/read`,
     ),
   createOffer: (
@@ -146,18 +182,35 @@ export const messagingApi = {
     payload: { price: number; quantity?: number; message?: string },
   ) =>
     apiMutate<OfferPayload>(
-      'post',
+      "post",
       `/conversations/${conversationId}/offers`,
       payload,
     ),
   acceptOffer: (offerId: string) =>
-    apiMutate<OfferPayload>('post', `/offers/${offerId}/accept`),
+    apiMutate<OfferPayload>("post", `/offers/${offerId}/accept`),
   declineOffer: (offerId: string) =>
-    apiMutate<OfferPayload>('post', `/offers/${offerId}/decline`),
+    apiMutate<OfferPayload>("post", `/offers/${offerId}/decline`),
   retractOffer: (offerId: string) =>
-    apiMutate<OfferPayload>('post', `/offers/${offerId}/retract`),
+    apiMutate<OfferPayload>("post", `/offers/${offerId}/retract`),
   counterOffer: (
     offerId: string,
     payload: { price: number; quantity?: number; message?: string },
-  ) => apiMutate<OfferPayload>('post', `/offers/${offerId}/counter`, payload),
+  ) => apiMutate<OfferPayload>("post", `/offers/${offerId}/counter`, payload),
+  proposeReplacement: (requestId: string) =>
+    apiMutate<ConversationMessage>(
+      "post",
+      `/inr-requests/${requestId}/replacements`,
+    ),
+  acceptReplacement: (replacementId: string) =>
+    apiMutate<ReplacementPayload>(
+      "post",
+      `/replacements/${replacementId}/accept`,
+    ),
+  declineReplacement: (replacementId: string) =>
+    apiMutate<ReplacementPayload>(
+      "post",
+      `/replacements/${replacementId}/decline`,
+    ),
+  refundInstead: (requestId: string) =>
+    apiMutate("patch", `/inr-requests/${requestId}/refund-instead`),
 };

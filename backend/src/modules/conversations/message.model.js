@@ -28,12 +28,13 @@ const schema = new mongoose.Schema(
     clientMessageId: { type: String, trim: true },
     type: {
       type: String,
-      enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'SYSTEM'],
+      enum: ['TEXT', 'IMAGE', 'FILE', 'OFFER', 'REPLACEMENT', 'SYSTEM'],
       required: true,
     },
     content: { type: String, trim: true, maxlength: 4000 },
     attachments: { type: [attachmentSchema], default: [] },
     offerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Offer' },
+    replacementId: { type: mongoose.Schema.Types.ObjectId, ref: 'Replacement' },
     status: {
       type: String,
       enum: ['SENT', 'DELIVERED', 'READ'],
@@ -46,6 +47,13 @@ const schema = new mongoose.Schema(
 
 schema.index({ conversationId: 1, createdAt: -1, _id: -1 });
 schema.index({ offerId: 1 });
+schema.index(
+  { replacementId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { replacementId: { $exists: true } },
+  },
+);
 schema.index(
   { conversationId: 1, senderId: 1, clientMessageId: 1 },
   {

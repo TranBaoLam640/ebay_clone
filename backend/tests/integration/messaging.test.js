@@ -194,9 +194,18 @@ beforeAll(async () => {
       .Address,
     Order: (await import('../../src/modules/orders/order.model.js')).Order,
     Offer: (await import('../../src/modules/offers/offer.model.js')).Offer,
+    INRRequest: (
+      await import('../../src/modules/inr-requests/inr-request.model.js')
+    ).INRRequest,
+    Replacement: (
+      await import('../../src/modules/replacements/replacement.model.js')
+    ).Replacement,
+    Shipment: (await import('../../src/modules/shipments/shipment.model.js'))
+      .Shipment,
     Message: (await import('../../src/modules/conversations/message.model.js'))
       .Message,
   };
+  await Promise.all(Object.values(models).map((model) => model.init?.()));
   ({ emailService } =
     await import('../../src/common/services/email.service.js'));
   ({ app } = await import('../../src/app.js'));
@@ -269,6 +278,24 @@ const checkout = async (session, body) => {
     .set('Idempotency-Key', crypto.randomUUID())
     .send(body);
 };
+
+const createInrRequest = async (conversationId, overrides = {}) =>
+  models.INRRequest.create({
+    buyerId: ids.buyer,
+    sellerId: ids.seller,
+    orderId: ids.order,
+    orderItemId: ids.orderItem,
+    productId: ids.product,
+    shipmentId: new mongoose.Types.ObjectId(),
+    requestedResolution: 'WANT_ITEM',
+    quantityMissing: 1,
+    details: 'Package did not arrive',
+    requestAmount: 100000,
+    currency: 'VND',
+    conversationId,
+    status: 'OPEN',
+    ...overrides,
+  });
 
 const uploadAttachments = async (session, conversationId, files) => {
   const token = await csrf(session.agent);
@@ -1307,6 +1334,301 @@ describe('buyer/seller messaging', () => {
       }),
     );
     sellerSocket.disconnect();
+  });
+
+  it('creates seller- and buyer-initiated structured replacement proposal messages', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const inr = await createInrRequest(conversation.id);
+
+    const sellerProposal = await mutate(
+      seller.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    );
+    expect(sellerProposal.status).toBe(201);
+    expect(sellerProposal.body.data).toEqual(
+      expect.objectContaining({
+        conversationId: conversation.id,
+        type: 'REPLACEMENT',
+        replacement: expect.objectContaining({
+          inrRequestId: String(inr._id),
+          status: 'PROPOSED',
+          initiatorRole: 'SELLER',
+          quantity: 1,
+          availableActions: [],
+        }),
+      }),
+    );
+    await models.Replacement.updateOne(
+      { _id: sellerProposal.body.data.replacement.id },
+      {
+        $set: {
+          status: 'DECLINED',
+          declinedBy: ids.buyer,
+          declinedAt: new Date(),
+        },
+        $unset: { activeKey: 1 },
+      },
+    );
+    await models.INRRequest.updateOne(
+      { _id: inr._id },
+      { $set: { resolutionMode: 'NONE' } },
+    );
+
+    const buyerProposal = await mutate(
+      buyer.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    );
+    expect(buyerProposal.status).toBe(201);
+    expect(buyerProposal.body.data.replacement).toEqual(
+      expect.objectContaining({
+        status: 'PROPOSED',
+        initiatorRole: 'BUYER',
+        quantity: 1,
+      }),
+    );
+
+    expect(
+      await models.Replacement.countDocuments({ inrRequestId: inr._id }),
+    ).toBe(2);
+    expect(
+      await models.Message.countDocuments({
+        conversationId: conversation.id,
+        type: 'REPLACEMENT',
+      }),
+    ).toBe(2);
+  });
+
+  it('rolls back a replacement proposal when structured message creation fails', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const inr = await createInrRequest(conversation.id);
+    const conversationRepository =
+      await import('../../src/modules/conversations/conversation.repository.js');
+    vi.spyOn(conversationRepository, 'addMessage').mockRejectedValueOnce(
+      new Error('injected message failure'),
+    );
+
+    const response = await mutate(
+      seller.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    );
+    expect(response.status).toBe(500);
+    expect(
+      await models.Replacement.countDocuments({ inrRequestId: inr._id }),
+    ).toBe(0);
+    expect(
+      await models.Message.countDocuments({
+        conversationId: conversation.id,
+        type: 'REPLACEMENT',
+      }),
+    ).toBe(0);
+    expect(
+      (await models.INRRequest.findById(inr._id).lean()).resolutionMode,
+    ).toBe('NONE');
+  });
+
+  it('keeps duplicate replacement proposal races to one active replacement and one card', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const inr = await createInrRequest(conversation.id);
+
+    const results = await Promise.all([
+      mutate(buyer.agent, 'post', `/inr-requests/${inr._id}/replacements`),
+      mutate(seller.agent, 'post', `/inr-requests/${inr._id}/replacements`),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([201, 409]);
+    expect(
+      await models.Replacement.countDocuments({
+        inrRequestId: inr._id,
+        activeKey: 'ACTIVE',
+      }),
+    ).toBe(1);
+    expect(
+      await models.Message.countDocuments({
+        conversationId: conversation.id,
+        type: 'REPLACEMENT',
+      }),
+    ).toBe(1);
+  });
+
+  it('rejects spoofed replacement cards through the normal message endpoint', async () => {
+    const buyer = await login('buyer@example.test');
+    const conversation = await createConversation(buyer);
+
+    const spoof = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/messages`,
+      {
+        type: 'REPLACEMENT',
+        replacementId: String(new mongoose.Types.ObjectId()),
+        content: 'Seller offered a replacement',
+        sendCopyToEmail: false,
+      },
+    );
+    expect(spoof.status).toBe(400);
+
+    const plainText = await mutate(
+      buyer.agent,
+      'post',
+      `/conversations/${conversation.id}/messages`,
+      {
+        content: 'Seller offered a replacement',
+        sendCopyToEmail: false,
+      },
+    );
+    expect(plainText.status).toBe(201);
+    expect(plainText.body.data).toEqual(
+      expect.objectContaining({
+        type: 'TEXT',
+        content: 'Seller offered a replacement',
+        replacement: null,
+      }),
+    );
+  });
+
+  it('derives replacement chat actions by viewer and removes them after accept', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const inr = await createInrRequest(conversation.id);
+    const proposal = await mutate(
+      seller.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    ).then((response) => response.body.data.replacement);
+
+    const buyerHistory = await buyer.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(buyerHistory.body.data[0].replacement.availableActions).toEqual([
+      'ACCEPT',
+      'REFUND_INSTEAD',
+    ]);
+    const sellerHistory = await seller.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(sellerHistory.body.data[0].replacement.availableActions).toEqual([]);
+
+    const accepted = await mutate(
+      buyer.agent,
+      'post',
+      `/replacements/${proposal.id}/accept`,
+    );
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.data).toEqual(
+      expect.objectContaining({
+        status: 'ACCEPTED',
+        availableActions: [],
+      }),
+    );
+    expect(accepted.body.data).not.toHaveProperty('inventoryClaimStatus');
+    expect((await models.Product.findById(ids.product).lean()).stock).toBe(1);
+    const stored = await models.Replacement.findById(proposal.id).lean();
+    expect(stored.status).toBe('ACCEPTED');
+    expect(stored.inventoryClaimStatus).toBe('CLAIMED');
+  });
+
+  it('lets the seller accept or decline buyer-requested replacement cards', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const inr = await createInrRequest(conversation.id);
+    const proposal = await mutate(
+      buyer.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    ).then((response) => response.body.data.replacement);
+
+    const sellerHistory = await seller.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(sellerHistory.body.data[0].replacement.availableActions).toEqual([
+      'ACCEPT',
+      'DECLINE',
+    ]);
+
+    const declined = await mutate(
+      seller.agent,
+      'post',
+      `/replacements/${proposal.id}/decline`,
+    );
+    expect(declined.status).toBe(200);
+    expect(declined.body.data).toEqual(
+      expect.objectContaining({
+        status: 'DECLINED',
+        availableActions: [],
+      }),
+    );
+    expect(
+      (await models.INRRequest.findById(inr._id).lean()).resolutionMode,
+    ).toBe('NONE');
+  });
+
+  it('keeps replacement cards coherent after buyer refund-instead and accept-vs-decline races', async () => {
+    const buyer = await login('buyer@example.test');
+    const seller = await login('seller@example.test');
+    const conversation = await createConversation(buyer);
+    const inr = await createInrRequest(conversation.id);
+    const sellerProposal = await mutate(
+      seller.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    ).then((response) => response.body.data.replacement);
+    const refundInstead = await mutate(
+      buyer.agent,
+      'patch',
+      `/inr-requests/${inr._id}/refund-instead`,
+    );
+    expect(refundInstead.status).toBe(200);
+    const refundHistory = await buyer.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(refundHistory.body.data[0].replacement).toEqual(
+      expect.objectContaining({
+        id: sellerProposal.id,
+        displayState: 'REFUND_REQUESTED',
+        availableActions: [],
+      }),
+    );
+
+    await models.Message.deleteMany({ conversationId: conversation.id });
+    await models.Replacement.deleteMany({ inrRequestId: inr._id });
+    await models.INRRequest.updateOne(
+      { _id: inr._id },
+      { $set: { resolutionMode: 'NONE', requestedResolution: 'WANT_ITEM' } },
+    );
+    const buyerProposal = await mutate(
+      buyer.agent,
+      'post',
+      `/inr-requests/${inr._id}/replacements`,
+    ).then((response) => response.body.data.replacement);
+
+    const race = await Promise.allSettled([
+      mutate(seller.agent, 'post', `/replacements/${buyerProposal.id}/accept`),
+      mutate(seller.agent, 'post', `/replacements/${buyerProposal.id}/decline`),
+    ]);
+    expect(race.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'fulfilled',
+    ]);
+    expect(race.map((result) => result.value.status).sort()).toEqual([
+      200, 409,
+    ]);
+    const finalHistory = await seller.agent
+      .get(`${prefix}/conversations/${conversation.id}/messages`)
+      .expect(200);
+    expect(finalHistory.body.data[0].replacement.availableActions).toEqual([]);
+    expect(['ACCEPTED', 'DECLINED']).toContain(
+      finalHistory.body.data[0].replacement.status,
+    );
   });
 
   it('allows seller attachment upload through SellerProfile.userId authorization', async () => {

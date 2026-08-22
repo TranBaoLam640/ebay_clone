@@ -327,42 +327,48 @@ const transitionOrThrow = async ({
   throw invalidState(staleMessage);
 };
 
-export const propose = (userId, input) =>
-  checkoutRepository.transaction(async (session) => {
-    const { request, item, initiatorRole } = await loadProposalContext(
-      userId,
-      input,
+export const proposeInSession = async (userId, input, session) => {
+  const { request, item, initiatorRole } = await loadProposalContext(
+    userId,
+    input,
+    session,
+  );
+  try {
+    const claimedResolution = await inrRepository.acquireReplacementResolution(
+      request._id,
       session,
     );
-    try {
-      const claimedResolution =
-        await inrRepository.acquireReplacementResolution(request._id, session);
-      if (!claimedResolution)
-        throw invalidState('INR is already on another resolution path');
-      const created = await repository.create(
-        {
-          inrRequestId: request._id,
-          orderId: request.orderId,
-          orderItemId: request.orderItemId,
-          buyerId: request.buyerId,
-          sellerId: request.sellerId,
-          productId: item.productId,
-          quantity: request.quantityMissing,
-          initiatorRole,
-          initiatedBy: userId,
-          status: 'PROPOSED',
-          inventoryClaimStatus: 'UNCLAIMED',
-          activeKey: REPLACEMENT_ACTIVE_KEY,
-        },
-        session,
-      );
-      return view(created.toObject());
-    } catch (error) {
-      if (duplicateActive(error))
-        throw invalidState('An active replacement already exists');
-      throw error;
-    }
-  });
+    if (!claimedResolution)
+      throw invalidState('INR is already on another resolution path');
+    const created = await repository.create(
+      {
+        inrRequestId: request._id,
+        orderId: request.orderId,
+        orderItemId: request.orderItemId,
+        buyerId: request.buyerId,
+        sellerId: request.sellerId,
+        productId: item.productId,
+        quantity: request.quantityMissing,
+        initiatorRole,
+        initiatedBy: userId,
+        status: 'PROPOSED',
+        inventoryClaimStatus: 'UNCLAIMED',
+        activeKey: REPLACEMENT_ACTIVE_KEY,
+      },
+      session,
+    );
+    return view(created.toObject());
+  } catch (error) {
+    if (duplicateActive(error))
+      throw invalidState('An active replacement already exists');
+    throw error;
+  }
+};
+
+export const propose = (userId, input) =>
+  checkoutRepository.transaction((session) =>
+    proposeInSession(userId, input, session),
+  );
 
 export const accept = (userId, id, { now = new Date() } = {}) =>
   checkoutRepository.transaction(async (session) => {

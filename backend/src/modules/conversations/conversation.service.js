@@ -1,7 +1,10 @@
 import { AppError } from '../../common/errors/app-error.js';
 import { ERROR_CODES } from '../../common/constants/error-codes.js';
 import { Product } from '../products/product.model.js';
+import { INRRequest } from '../inr-requests/inr-request.model.js';
+import { Replacement } from '../replacements/replacement.model.js';
 import { SellerProfile } from '../sellers/seller-profile.model.js';
+import { Shipment } from '../shipments/shipment.model.js';
 import { Order } from '../orders/order.model.js';
 import { User } from '../users/user.model.js';
 import { emailService } from '../../common/services/email.service.js';
@@ -121,7 +124,63 @@ const toOfferView = (offer) => {
   };
 };
 
-const toMessageView = (message, offer) => ({
+const replacementDisplayState = (replacement, request) => {
+  if (request?.resolutionMode === 'REFUND') return 'REFUND_REQUESTED';
+  if (replacement.status === 'ACCEPTED') return 'ACCEPTED';
+  if (replacement.status === 'FULFILLING') return 'FULFILLING';
+  return replacement.status;
+};
+
+const replacementActions = ({ replacement, request, role }) => {
+  if (
+    !role ||
+    request?.resolutionMode !== 'REPLACEMENT' ||
+    replacement.status !== 'PROPOSED' ||
+    role === replacement.initiatorRole
+  )
+    return [];
+  if (replacement.initiatorRole === 'SELLER' && role === 'BUYER')
+    return ['ACCEPT', 'REFUND_INSTEAD'];
+  if (replacement.initiatorRole === 'BUYER' && role === 'SELLER')
+    return ['ACCEPT', 'DECLINE'];
+  return [];
+};
+
+const toReplacementView = ({
+  replacement,
+  request,
+  shipment,
+  product,
+  role,
+}) => {
+  if (!replacement) return null;
+  return {
+    id: String(replacement._id),
+    inrRequestId: String(replacement.inrRequestId),
+    status: replacement.status,
+    displayState: replacementDisplayState(replacement, request),
+    initiatorRole: replacement.initiatorRole,
+    quantity: replacement.quantity,
+    availableActions: replacementActions({ replacement, request, role }),
+    product: {
+      id: product?.uuid ?? (product?._id ? String(product._id) : null),
+      title: product?.title ?? null,
+      image: product?.images?.[0] ?? null,
+    },
+    shipment: shipment
+      ? {
+          status: shipment.status,
+          estimatedDeliveryAt: shipment.estimatedDeliveryAt ?? null,
+          pickedUpAt: shipment.pickedUpAt ?? null,
+          deliveredAt: shipment.deliveredAt ?? null,
+        }
+      : null,
+    createdAt: replacement.createdAt,
+    updatedAt: replacement.updatedAt,
+  };
+};
+
+const toMessageView = (message, offer, replacement) => ({
   id: String(message._id),
   conversationId: String(message.conversationId),
   senderId: String(idValue(message.senderId)),
@@ -135,9 +194,74 @@ const toMessageView = (message, offer) => ({
   content: message.content ?? null,
   attachments: message.attachments,
   offer: toOfferView(offer ?? message.offerId),
+  replacement: replacement ?? null,
   status: message.status,
   createdAt: message.createdAt,
 });
+
+const enrichMessageViews = async (rows, role) => {
+  const replacementIds = [
+    ...new Set(
+      rows
+        .map((message) => idValue(message.replacementId))
+        .filter(Boolean)
+        .map(String),
+    ),
+  ];
+  if (replacementIds.length === 0)
+    return rows.map((message) => toMessageView(message));
+
+  const replacements = await Replacement.find({ _id: { $in: replacementIds } })
+    .select(
+      '_id inrRequestId productId quantity initiatorRole status createdAt updatedAt',
+    )
+    .lean();
+  const requestIds = [
+    ...new Set(replacements.map((item) => item.inrRequestId)),
+  ];
+  const productIds = [...new Set(replacements.map((item) => item.productId))];
+  const [requests, products, shipments] = await Promise.all([
+    INRRequest.find({ _id: { $in: requestIds } })
+      .select('_id resolutionMode requestedResolution')
+      .lean(),
+    Product.find({ _id: { $in: productIds } })
+      .select('_id uuid title images')
+      .lean(),
+    Shipment.find({
+      replacementId: { $in: replacementIds },
+      purpose: 'REPLACEMENT',
+    })
+      .select('replacementId status estimatedDeliveryAt pickedUpAt deliveredAt')
+      .lean(),
+  ]);
+  const replacementMap = new Map(
+    replacements.map((item) => [String(item._id), item]),
+  );
+  const requestMap = new Map(requests.map((item) => [String(item._id), item]));
+  const productMap = new Map(products.map((item) => [String(item._id), item]));
+  const shipmentMap = new Map(
+    shipments.map((item) => [String(item.replacementId), item]),
+  );
+
+  return rows.map((message) => {
+    const replacement = replacementMap.get(
+      String(idValue(message.replacementId)),
+    );
+    return toMessageView(
+      message,
+      undefined,
+      replacement
+        ? toReplacementView({
+            replacement,
+            request: requestMap.get(String(replacement.inrRequestId)),
+            shipment: shipmentMap.get(String(replacement._id)),
+            product: productMap.get(String(replacement.productId)),
+            role,
+          })
+        : null,
+    );
+  });
+};
 
 export const list = async (userId, query) => {
   const sellerProfiles = await SellerProfile.find({ userId })
@@ -333,9 +457,14 @@ export const sendMessage = async (userId, conversationId, input) => {
 };
 
 export const messages = async (userId, conversationId, query) => {
-  await assertParticipant(conversationId, userId);
+  const { role } = await assertParticipant(conversationId, userId);
   const rows = await repo.listMessages({ conversationId, ...query });
-  return rows.reverse().map((message) => toMessageView(message));
+  return enrichMessageViews(rows.reverse(), role);
+};
+
+export const messageForUser = async (userId, message) => {
+  const { role } = await assertParticipant(message.conversationId, userId);
+  return (await enrichMessageViews([message], role))[0];
 };
 
 export const markRead = async (userId, conversationId) => {

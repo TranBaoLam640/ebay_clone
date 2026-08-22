@@ -105,6 +105,37 @@ export const inrRequestPaths = {
       security: security.unsafe,
     }),
   },
+  '/inr-requests/{requestId}/refund-instead': {
+    patch: operation({
+      tag: 'INR Requests',
+      operationId: 'requestINRRefundInstead',
+      summary: 'Switch a replacement-path INR request to refund',
+      description:
+        'Buyer-only action used by replacement negotiation cards. The existing INR replacement/refund service cancels or declines the active pre-transit replacement and moves the INR to the refund resolution path without creating a financial Refund.',
+      parameters: [requestId],
+      success: response('Updated INR request', ref('INRBuyerRequest')),
+      errors: [400, 401, 403, 404, 409, 429, 500],
+      security: security.unsafe,
+    }),
+  },
+  '/inr-requests/{requestId}/replacements': {
+    post: operation({
+      tag: 'INR Requests',
+      operationId: 'proposeINRReplacement',
+      summary: 'Propose a replacement for an INR request',
+      description:
+        'Buyer or seller proposes a replacement. The backend derives buyer, seller, order item, product, and quantity from the INR request, creates the Replacement and its structured conversation message in one transaction, then emits the chat event after commit.',
+      parameters: [requestId],
+      requestBody: body({ type: 'object', additionalProperties: false }),
+      success: response(
+        'Structured replacement message',
+        ref('ConversationMessage'),
+      ),
+      successStatus: 201,
+      errors: [400, 401, 403, 404, 409, 429, 500],
+      security: security.unsafe,
+    }),
+  },
   '/inr-requests/{requestId}/close': {
     patch: operation({
       tag: 'INR Requests',

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../../config/env.js';
+import { logger } from '../../config/logger.js';
 import * as userRepository from '../users/repository.js';
 import * as authRepository from './repository.js';
 import * as notificationService from '../notifications/service.js';
@@ -113,10 +114,24 @@ export const register = async ({ email, password, fullName }) => {
   };
 };
 export const login = async (email, password, ipAddress, userAgent) => {
-  const user = await userRepository.findByEmailWithPassword(
-    normalizeEmail(email),
-  );
-  if (!user || !(await verifyPassword(password, user.passwordHash)))
+  const normalizedEmail = normalizeEmail(email);
+  const user = await userRepository.findByEmailWithPassword(normalizedEmail);
+  logger.warn({
+    email: normalizedEmail,
+    userFound: !!user,
+    hasPasswordHash: !!user?.passwordHash,
+    status: user?.status,
+    role: user?.role,
+    isEmailVerified: user?.isEmailVerified,
+  }, 'LOGIN DEBUG user lookup');
+  const passwordMatched = user
+    ? await verifyPassword(password, user.passwordHash)
+    : false;
+  logger.warn({
+    email: normalizedEmail,
+    passwordMatched,
+  }, 'LOGIN DEBUG password check');
+  if (!user || !passwordMatched)
     throw genericAuthError();
   if (user.status === USER_STATUS.PENDING_VERIFICATION)
     throw new AppError(

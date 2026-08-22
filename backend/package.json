@@ -19,7 +19,8 @@
     "db:check": "node src/scripts/check-database.js",
     "docs:check": "node src/scripts/check-openapi.js",
     "feedback:indexes": "node src/scripts/maintain-seller-feedback-indexes.js",
-    "shipments:indexes": "node src/scripts/maintain-shipment-indexes.js"
+    "shipments:indexes": "node src/scripts/maintain-shipment-indexes.js",
+    "inr:resolution-guard": "node src/scripts/maintain-inr-resolution-guard.js"
   },
   "engines": {
     "node": ">=20"

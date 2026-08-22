@@ -9,6 +9,8 @@ const publicProjection = {
   productId: 1,
   shipmentId: 1,
   requestedResolution: 1,
+  resolutionMode: 1,
+  resolutionModeUpdatedAt: 1,
   quantityMissing: 1,
   details: 1,
   requestAmount: 1,
@@ -25,6 +27,14 @@ const publicProjection = {
 
 export const create = async (data, session) =>
   (await INRRequest.create([data], { session }))[0];
+
+const noResolutionModeFilter = {
+  $or: [
+    { resolutionMode: 'NONE' },
+    { resolutionMode: { $exists: false } },
+    { resolutionMode: null },
+  ],
+};
 
 export const listByBuyer = (buyerId, { status }, skip, limit) => {
   const filter = { buyerId };
@@ -65,6 +75,102 @@ export const findById = (id, session) =>
     .select(publicProjection)
     .session(session || null)
     .lean();
+
+export const acquireReplacementResolution = (id, session, now = new Date()) =>
+  INRRequest.findOneAndUpdate(
+    { _id: id, status: 'OPEN', ...noResolutionModeFilter },
+    {
+      resolutionMode: 'REPLACEMENT',
+      resolutionModeUpdatedAt: now,
+    },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
+
+export const requireReplacementResolution = (id, session) =>
+  INRRequest.findOne({
+    _id: id,
+    status: 'OPEN',
+    resolutionMode: 'REPLACEMENT',
+  })
+    .select(publicProjection)
+    .session(session || null)
+    .lean();
+
+export const releaseReplacementResolution = (id, session, now = new Date()) =>
+  INRRequest.findOneAndUpdate(
+    { _id: id, status: 'OPEN', resolutionMode: 'REPLACEMENT' },
+    {
+      resolutionMode: 'NONE',
+      resolutionModeUpdatedAt: now,
+    },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
+
+export const acquireRefundResolution = (
+  id,
+  sellerId,
+  session,
+  now = new Date(),
+) =>
+  INRRequest.findOneAndUpdate(
+    {
+      _id: id,
+      sellerId,
+      status: 'OPEN',
+      $or: [
+        { resolutionMode: 'NONE' },
+        { resolutionMode: 'REFUND' },
+        { resolutionMode: { $exists: false } },
+        { resolutionMode: null },
+      ],
+    },
+    {
+      resolutionMode: 'REFUND',
+      resolutionModeUpdatedAt: now,
+    },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
+
+export const switchReplacementToRefund = (
+  id,
+  buyerId,
+  session,
+  now = new Date(),
+) =>
+  INRRequest.findOneAndUpdate(
+    {
+      _id: id,
+      buyerId,
+      status: 'OPEN',
+      resolutionMode: 'REPLACEMENT',
+    },
+    {
+      requestedResolution: 'REFUND',
+      resolutionMode: 'REFUND',
+      resolutionModeUpdatedAt: now,
+    },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
+
+export const sellerSwitchReplacementToRefund = (
+  id,
+  sellerId,
+  session,
+  now = new Date(),
+) =>
+  INRRequest.findOneAndUpdate(
+    {
+      _id: id,
+      sellerId,
+      status: 'OPEN',
+      resolutionMode: 'REPLACEMENT',
+    },
+    {
+      resolutionMode: 'REFUND',
+      resolutionModeUpdatedAt: now,
+    },
+    { session, returnDocument: 'after', projection: publicProjection },
+  ).lean();
 
 export const findOwnedByBuyer = (buyerId, id, session) =>
   INRRequest.findOne({ _id: id, buyerId })

@@ -26,6 +26,11 @@ inrRequestRoute.post(
   validate(refundSchema),
   controller.refund,
 );
+inrRequestRoute.patch(
+  '/:requestId/refund-instead',
+  validate(idSchema),
+  controller.requestRefundInstead,
+);
 inrRequestRoute.get('/:requestId', validate(idSchema), controller.get);
 inrRequestRoute.patch(
   '/:requestId/close',

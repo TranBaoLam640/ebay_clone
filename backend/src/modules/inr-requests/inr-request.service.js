@@ -10,6 +10,7 @@ import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
 import * as paymentRepository from '../payments/payment.repository.js';
 import * as refundService from '../payments/refunds/refund.service.js';
+import * as replacementService from '../replacements/replacement.service.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
 import * as shipmentRepository from '../shipments/shipment.repository.js';
 import { User } from '../users/user.model.js';
@@ -321,6 +322,8 @@ export const create = (buyerId, input, { now = new Date() } = {}) =>
           productId: item.productId,
           shipmentId: shipment._id,
           requestedResolution: input.requestedResolution,
+          resolutionMode: 'NONE',
+          resolutionModeUpdatedAt: now,
           quantityMissing: input.quantityMissing,
           details: input.details,
           requestAmount: requestAmount(item, input.quantityMissing),
@@ -524,6 +527,11 @@ export const refundPreview = async (userId, id) => {
   return previewDto({ request, order, item, payment, buyer });
 };
 
+export const requestRefundInstead = async (buyerId, id) => {
+  const result = await replacementService.requestRefundInstead(buyerId, id);
+  return buyerDto(await loadContext(result.request));
+};
+
 const refundInput = ({ request, payment }) => ({
   paymentId: payment._id,
   checkoutGroupId: payment.checkoutGroupId,
@@ -542,9 +550,18 @@ export const refund = async (userId, id, key, { now = new Date() } = {}) => {
   if (claim.replay) return claim.replay;
   try {
     const { seller, request } = await ensureSellerRequest(userId, id);
-    const { payment } = await refundPaymentContext(request);
+    const guardedRequest = await checkoutRepository.transaction((session) =>
+      replacementService.prepareSellerRefundResolution({
+        sellerId: seller._id,
+        userId,
+        request,
+        session,
+        now,
+      }),
+    );
+    const { payment } = await refundPaymentContext(guardedRequest);
     const claimed = await refundService.prepare(
-      refundInput({ request, payment }),
+      refundInput({ request: guardedRequest, payment }),
     );
     let refundRecord = claimed.refund;
     if (claimed.state !== 'COMPLETED')

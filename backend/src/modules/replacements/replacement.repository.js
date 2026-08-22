@@ -47,6 +47,15 @@ export const listByInrRequest = (inrRequestId, session) =>
     .session(session || null)
     .lean();
 
+export const findActiveByInrRequest = (inrRequestId, session) =>
+  Replacement.findOne({
+    inrRequestId,
+    status: { $in: ['PROPOSED', 'ACCEPTED', 'FULFILLING'] },
+  })
+    .select(publicProjection)
+    .session(session || null)
+    .lean();
+
 export const transition = (id, fromStatuses, update, session, filter = {}) =>
   Replacement.findOneAndUpdate(
     { _id: id, status: { $in: fromStatuses }, ...filter },

@@ -77,6 +77,20 @@ export const refundPreview = async (req, res, next) => {
   }
 };
 
+export const requestRefundInstead = async (req, res, next) => {
+  try {
+    success(
+      res,
+      await service.requestRefundInstead(
+        req.user.id,
+        req.validated.params.requestId,
+      ),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const refund = async (req, res, next) => {
   try {
     const key = req.get('Idempotency-Key')?.trim();

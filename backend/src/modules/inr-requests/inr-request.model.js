@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import {
   INR_CLOSE_REASONS,
   INR_REQUESTED_RESOLUTIONS,
+  INR_RESOLUTION_MODES,
   INR_STATUSES,
 } from './inr-request.constants.js';
 
@@ -58,6 +59,13 @@ const schema = new mongoose.Schema(
       enum: INR_REQUESTED_RESOLUTIONS,
       required: true,
     },
+    resolutionMode: {
+      type: String,
+      enum: INR_RESOLUTION_MODES,
+      required: true,
+      default: 'NONE',
+    },
+    resolutionModeUpdatedAt: Date,
     quantityMissing: {
       type: Number,
       required: true,
@@ -99,6 +107,7 @@ const schema = new mongoose.Schema(
 
 schema.index({ buyerId: 1, status: 1, createdAt: -1 });
 schema.index({ sellerId: 1, status: 1, createdAt: -1 });
+schema.index({ resolutionMode: 1, status: 1, updatedAt: -1 });
 schema.index(
   { orderId: 1, orderItemId: 1 },
   { unique: true, partialFilterExpression: { status: 'OPEN' } },

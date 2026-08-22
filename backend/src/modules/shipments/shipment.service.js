@@ -5,6 +5,7 @@ import { pagination, paginationMeta } from '../../common/utils/pagination.js';
 import { env } from '../../config/env.js';
 import { USER4_NOTIFICATION_EVENTS } from '../../common/constants/user4-notification-events.js';
 import * as checkoutRepository from '../checkout/checkout.repository.js';
+import * as inrRepository from '../inr-requests/inr-request.repository.js';
 import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
 import * as replacementRepository from '../replacements/replacement.repository.js';
@@ -157,6 +158,12 @@ export const pickup = (shipperId, shipmentId) =>
         );
       if (!replacement)
         throw invalidState('Replacement shipment cannot be picked up');
+      const request = await inrRepository.requireReplacementResolution(
+        replacement.inrRequestId,
+        session,
+      );
+      if (!request)
+        throw invalidState('Replacement resolution is no longer active');
     }
     return claimed;
   });

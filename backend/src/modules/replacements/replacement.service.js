@@ -148,6 +148,136 @@ const assertSellerOwnsReplacement = (replacement, role) => {
     throw invalidState('Replacement shipment requires claimed inventory');
 };
 
+const ensureReplacementMode = async (replacement, session) => {
+  const request = await inrRepository.requireReplacementResolution(
+    replacement.inrRequestId,
+    session,
+  );
+  if (!request)
+    throw invalidState('INR is not on the replacement resolution path');
+  return request;
+};
+
+const releaseReplacementMode = async (replacement, session, now) => {
+  const request = await inrRepository.releaseReplacementResolution(
+    replacement.inrRequestId,
+    session,
+    now,
+  );
+  if (!request)
+    throw invalidState('Replacement resolution could not be released');
+  return request;
+};
+
+const terminalUpdateForRefund = ({ replacement, userId, role, now }) => {
+  const actorIsInitiator = role === replacement.initiatorRole;
+  if (actorIsInitiator)
+    return {
+      status: 'CANCELLED',
+      update: {
+        $set: {
+          status: 'CANCELLED',
+          cancelledBy: userId,
+          cancelledAt: now,
+          inventoryClaimStatus: 'UNCLAIMED',
+          cancellation: { reason: 'REFUND_INSTEAD' },
+        },
+        $unset: { activeKey: 1 },
+      },
+    };
+  return {
+    status: 'DECLINED',
+    update: {
+      $set: {
+        status: 'DECLINED',
+        declinedBy: userId,
+        declinedAt: now,
+        inventoryClaimStatus: 'UNCLAIMED',
+        decline: { reason: 'REFUND_INSTEAD' },
+      },
+      $unset: { activeKey: 1 },
+    },
+  };
+};
+
+const cancelAcceptedForRefund = async ({
+  replacement,
+  userId,
+  session,
+  now,
+}) => {
+  const shipment = await shipmentRepository.findByReplacementId(
+    replacement._id,
+    session,
+  );
+  if (shipment && shipment.status !== 'READY_FOR_PICKUP')
+    throw invalidState('Replacement cannot switch to refund after pickup');
+  if (shipment) {
+    const cancelledShipment =
+      await shipmentRepository.cancelReadyForPickupByReplacementId(
+        replacement._id,
+        now,
+        session,
+      );
+    if (!cancelledShipment)
+      throw invalidState('Replacement shipment cannot be cancelled');
+  }
+  const restored = await productRepository.restoreStock(
+    replacement.productId,
+    replacement.quantity,
+    session,
+  );
+  if (!restored?.matchedCount)
+    throw invalidState('Replacement inventory could not be released');
+  return transitionOrThrow({
+    id: replacement._id,
+    from: ['ACCEPTED'],
+    filter: { inventoryClaimStatus: 'CLAIMED' },
+    update: {
+      $set: {
+        status: 'CANCELLED',
+        cancelledBy: userId,
+        cancelledAt: now,
+        inventoryClaimStatus: 'RELEASED',
+        inventoryReleasedAt: now,
+        cancellation: { reason: 'REFUND_INSTEAD' },
+      },
+      $unset: { activeKey: 1 },
+    },
+    session,
+    staleMessage: 'Replacement cannot switch to refund',
+  });
+};
+
+const terminalizeForRefund = async ({
+  replacement,
+  userId,
+  role,
+  session,
+  now,
+}) => {
+  await ensureReplacementMode(replacement, session);
+  if (replacement.status === 'PROPOSED') {
+    const { update } = terminalUpdateForRefund({
+      replacement,
+      userId,
+      role,
+      now,
+    });
+    return transitionOrThrow({
+      id: replacement._id,
+      from: ['PROPOSED'],
+      filter: { inventoryClaimStatus: 'UNCLAIMED' },
+      update,
+      session,
+      staleMessage: 'Replacement can no longer switch to refund',
+    });
+  }
+  if (replacement.status === 'ACCEPTED')
+    return cancelAcceptedForRefund({ replacement, userId, session, now });
+  throw invalidState('Replacement cannot switch to refund after pickup');
+};
+
 const loadActionContext = async (userId, id, session) => {
   const replacement = await repository.findById(id, session);
   if (!replacement) throw notFound();
@@ -193,6 +323,10 @@ export const propose = (userId, input) =>
       session,
     );
     try {
+      const claimedResolution =
+        await inrRepository.acquireReplacementResolution(request._id, session);
+      if (!claimedResolution)
+        throw invalidState('INR is already on another resolution path');
       const created = await repository.create(
         {
           inrRequestId: request._id,
@@ -222,6 +356,7 @@ export const accept = (userId, id, { now = new Date() } = {}) =>
   checkoutRepository.transaction(async (session) => {
     const { replacement, role } = await loadActionContext(userId, id, session);
     assertCounterparty(replacement, role, 'accept');
+    await ensureReplacementMode(replacement, session);
     const claimed = await productRepository.deductStockForSeller(
       replacement.productId,
       replacement.sellerId,
@@ -276,6 +411,7 @@ export const decline = (userId, id, input = {}, { now = new Date() } = {}) =>
       session,
       staleMessage: 'Replacement is no longer proposed',
     });
+    await releaseReplacementMode(replacement, session, now);
     return view(declined);
   });
 
@@ -339,6 +475,7 @@ export const cancel = (userId, id, input = {}, { now = new Date() } = {}) =>
       session,
       staleMessage: 'Replacement cannot be cancelled',
     });
+    await releaseReplacementMode(replacement, session, now);
     return view(cancelled);
   });
 
@@ -346,6 +483,7 @@ export const prepareShipment = (userId, id, { now = new Date() } = {}) =>
   checkoutRepository.transaction(async (session) => {
     const { replacement, role } = await loadActionContext(userId, id, session);
     assertSellerOwnsReplacement(replacement, role);
+    await ensureReplacementMode(replacement, session);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -377,6 +515,88 @@ export const prepareShipment = (userId, id, { now = new Date() } = {}) =>
     }
     throw new Error('Shipment tracking number generation failed');
   });
+
+export const requestRefundInstead = (
+  userId,
+  inrRequestId,
+  { now = new Date() } = {},
+) =>
+  checkoutRepository.transaction(async (session) => {
+    const request = await inrRepository.findOwnedByBuyer(
+      userId,
+      inrRequestId,
+      session,
+    );
+    if (!request)
+      throw new AppError(
+        404,
+        ERROR_CODES.INR_NOT_FOUND,
+        'INR request not found',
+      );
+    if (request.status !== 'OPEN')
+      throw invalidState('INR request is not open');
+    const replacement = await repository.findActiveByInrRequest(
+      request._id,
+      session,
+    );
+    if (!replacement) throw invalidState('No active replacement to switch');
+    const switched = await terminalizeForRefund({
+      replacement,
+      userId,
+      role: 'BUYER',
+      session,
+      now,
+    });
+    const updatedRequest = await inrRepository.switchReplacementToRefund(
+      request._id,
+      userId,
+      session,
+      now,
+    );
+    if (!updatedRequest)
+      throw invalidState('INR could not switch to refund resolution');
+    return { request: updatedRequest, replacement: view(switched) };
+  });
+
+export const prepareSellerRefundResolution = async ({
+  sellerId,
+  userId,
+  request,
+  session,
+  now = new Date(),
+}) => {
+  const replacement = await repository.findActiveByInrRequest(
+    request._id,
+    session,
+  );
+  if (!replacement) {
+    const claimed = await inrRepository.acquireRefundResolution(
+      request._id,
+      sellerId,
+      session,
+      now,
+    );
+    if (!claimed)
+      throw invalidState('INR is already on another resolution path');
+    return claimed;
+  }
+  await terminalizeForRefund({
+    replacement,
+    userId,
+    role: 'SELLER',
+    session,
+    now,
+  });
+  const switched = await inrRepository.sellerSwitchReplacementToRefund(
+    request._id,
+    sellerId,
+    session,
+    now,
+  );
+  if (!switched)
+    throw invalidState('INR could not switch to refund resolution');
+  return switched;
+};
 
 export const findById = async (id, session) => {
   const replacement = await repository.findById(id, session);

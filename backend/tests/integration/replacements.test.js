@@ -384,6 +384,10 @@ describe('replacement domain foundation', () => {
     await expectStatus(service.decline(ids.sellerUser, buyerProposal.id), 409);
 
     await models.Replacement.deleteMany({});
+    await models.INRRequest.updateOne(
+      { _id: ids.inr },
+      { resolutionMode: 'NONE' },
+    );
     const sellerProposal = await proposeSeller();
     await expectStatus(service.accept(ids.sellerUser, sellerProposal.id), 403);
     const buyerAccepted = await service.accept(ids.buyer, sellerProposal.id);
@@ -1096,6 +1100,10 @@ describe('replacement domain foundation', () => {
     ).toBe(1);
 
     await models.Replacement.deleteMany({});
+    await models.INRRequest.updateOne(
+      { _id: ids.inr },
+      { resolutionMode: 'NONE' },
+    );
     const results = await Promise.allSettled([proposeBuyer(), proposeSeller()]);
     expect(results.map((result) => result.status).sort()).toEqual([
       'fulfilled',

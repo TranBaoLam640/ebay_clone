@@ -100,9 +100,19 @@ const assertCounterparty = (replacement, role, action) => {
     throw forbidden(`Replacement initiator cannot ${action} own proposal`);
 };
 
-const assertInitiator = (replacement, userId) => {
-  if (String(replacement.initiatedBy) !== String(userId))
-    throw forbidden('Only the initiator can cancel this replacement proposal');
+const assertCancellationAllowed = (replacement, userId, role) => {
+  if (replacement.status === 'PROPOSED') {
+    if (String(replacement.initiatedBy) !== String(userId))
+      throw forbidden(
+        'Only the initiator can cancel this replacement proposal',
+      );
+    return;
+  }
+  if (replacement.status === 'ACCEPTED') {
+    if (!role) throw forbidden('Only the INR buyer or seller can cancel');
+    return;
+  }
+  throw invalidState('Replacement cannot be cancelled');
 };
 
 const loadActionContext = async (userId, id, session) => {
@@ -219,8 +229,8 @@ export const decline = (userId, id, input = {}, { now = new Date() } = {}) =>
 
 export const cancel = (userId, id, input = {}, { now = new Date() } = {}) =>
   checkoutRepository.transaction(async (session) => {
-    const { replacement } = await loadActionContext(userId, id, session);
-    assertInitiator(replacement, userId);
+    const { replacement, role } = await loadActionContext(userId, id, session);
+    assertCancellationAllowed(replacement, userId, role);
     const cancelled = await transitionOrThrow({
       id,
       from: ['PROPOSED', 'ACCEPTED'],

@@ -375,13 +375,14 @@ describe('replacement domain foundation', () => {
     ).not.toHaveProperty('activeKey');
   });
 
-  it('cancels proposed or accepted replacements only by the initiator', async () => {
+  it('keeps PROPOSED cancellation as initiator-only withdrawal', async () => {
     const buyerProposal = await proposeBuyer();
     await expectStatus(service.cancel(ids.sellerUser, buyerProposal.id), 403);
-    const cancelled = await service.cancel(ids.buyer, buyerProposal.id, {
+    await expectStatus(service.cancel(ids.otherBuyer, buyerProposal.id), 403);
+    const buyerCancelled = await service.cancel(ids.buyer, buyerProposal.id, {
       reason: 'WITHDRAWN',
     });
-    expect(cancelled).toEqual(
+    expect(buyerCancelled).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
         cancelledBy: String(ids.buyer),
@@ -391,18 +392,112 @@ describe('replacement domain foundation', () => {
     );
 
     const sellerProposal = await proposeSeller();
-    await service.accept(ids.buyer, sellerProposal.id);
-    const acceptedCancelled = await service.cancel(
+    await expectStatus(service.cancel(ids.buyer, sellerProposal.id), 403);
+    await expectStatus(service.cancel(ids.otherBuyer, sellerProposal.id), 403);
+    const sellerCancelled = await service.cancel(
       ids.sellerUser,
       sellerProposal.id,
-      { note: 'Pre-fulfillment cancellation' },
+      { reason: 'WITHDRAWN' },
     );
-    expect(acceptedCancelled).toEqual(
+    expect(sellerCancelled).toEqual(
       expect.objectContaining({
         status: 'CANCELLED',
+        cancelledBy: String(ids.sellerUser),
+        cancelledAt: expect.any(Date),
+        cancellation: { reason: 'WITHDRAWN' },
+      }),
+    );
+  });
+
+  it('allows the PROPOSED counterparty to decline instead of cancel', async () => {
+    const buyerProposal = await proposeBuyer();
+    const sellerDeclined = await service.decline(
+      ids.sellerUser,
+      buyerProposal.id,
+    );
+    expect(sellerDeclined).toEqual(
+      expect.objectContaining({
+        status: 'DECLINED',
+        declinedBy: String(ids.sellerUser),
+      }),
+    );
+
+    const sellerProposal = await proposeSeller();
+    const buyerDeclined = await service.decline(ids.buyer, sellerProposal.id);
+    expect(buyerDeclined).toEqual(
+      expect.objectContaining({
+        status: 'DECLINED',
+        declinedBy: String(ids.buyer),
+      }),
+    );
+  });
+
+  it('allows either legitimate party to cancel ACCEPTED before fulfillment', async () => {
+    const sellerProposalBuyerCancels = await proposeSeller();
+    await service.accept(ids.buyer, sellerProposalBuyerCancels.id);
+    await expectStatus(
+      service.cancel(ids.otherBuyer, sellerProposalBuyerCancels.id),
+      403,
+    );
+    const buyerCancelledSellerProposal = await service.cancel(
+      ids.buyer,
+      sellerProposalBuyerCancels.id,
+      { note: 'Buyer wants refund path later' },
+    );
+    expect(buyerCancelledSellerProposal).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        cancelledBy: String(ids.buyer),
         acceptedAt: expect.any(Date),
         cancelledAt: expect.any(Date),
-        cancellation: { note: 'Pre-fulfillment cancellation' },
+        cancellation: { note: 'Buyer wants refund path later' },
+      }),
+    );
+
+    const sellerProposalSellerCancels = await proposeSeller();
+    await service.accept(ids.buyer, sellerProposalSellerCancels.id);
+    const sellerCancelledSellerProposal = await service.cancel(
+      ids.sellerUser,
+      sellerProposalSellerCancels.id,
+      { note: 'Seller cannot fulfill later' },
+    );
+    expect(sellerCancelledSellerProposal).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        cancelledBy: String(ids.sellerUser),
+        acceptedAt: expect.any(Date),
+        cancelledAt: expect.any(Date),
+        cancellation: { note: 'Seller cannot fulfill later' },
+      }),
+    );
+
+    const buyerProposalBuyerCancels = await proposeBuyer();
+    await service.accept(ids.sellerUser, buyerProposalBuyerCancels.id);
+    const buyerCancelledBuyerProposal = await service.cancel(
+      ids.buyer,
+      buyerProposalBuyerCancels.id,
+    );
+    expect(buyerCancelledBuyerProposal).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        cancelledBy: String(ids.buyer),
+        acceptedAt: expect.any(Date),
+        cancelledAt: expect.any(Date),
+      }),
+    );
+
+    const buyerProposalSellerCancels = await proposeBuyer();
+    await service.accept(ids.sellerUser, buyerProposalSellerCancels.id);
+    const sellerCancelledBuyerProposal = await service.cancel(
+      ids.sellerUser,
+      buyerProposalSellerCancels.id,
+    );
+    expect(sellerCancelledBuyerProposal).toEqual(
+      expect.objectContaining({
+        status: 'CANCELLED',
+        cancelledBy: String(ids.sellerUser),
+        acceptedAt: expect.any(Date),
+        cancelledAt: expect.any(Date),
       }),
     );
   });

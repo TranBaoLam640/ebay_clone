@@ -56,7 +56,6 @@ export const create = async (data, session) =>
 
 export const listAvailable = (skip, limit, session) =>
   Shipment.find({
-    ...originalPurposeFilter,
     status: 'READY_FOR_PICKUP',
     shipperId: null,
   })
@@ -69,14 +68,12 @@ export const listAvailable = (skip, limit, session) =>
 
 export const countAvailable = (session) =>
   Shipment.countDocuments({
-    ...originalPurposeFilter,
     status: 'READY_FOR_PICKUP',
     shipperId: null,
   }).session(session || null);
 
 export const listByShipper = (shipperId, skip, limit, session) =>
   Shipment.find({
-    ...originalPurposeFilter,
     shipperId,
     status: { $in: ['IN_TRANSIT', 'DELIVERED'] },
   })
@@ -89,7 +86,6 @@ export const listByShipper = (shipperId, skip, limit, session) =>
 
 export const countByShipper = (shipperId, session) =>
   Shipment.countDocuments({
-    ...originalPurposeFilter,
     shipperId,
     status: { $in: ['IN_TRANSIT', 'DELIVERED'] },
   }).session(session || null);

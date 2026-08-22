@@ -355,6 +355,47 @@ describe('shipping backend foundation', () => {
     ]);
   });
 
+  it('includes replacement shipments in shipper available and mine queues', async () => {
+    const order = orderSnapshot();
+    const original = await shipmentService.createForOrder(order);
+    const replacement = await replacementDocument({
+      orderId: order._id,
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+    });
+    const replacementShipment = await Shipment.create(
+      replacementShipmentData(replacement, {
+        trackingNumber: 'SBAY-REPLQUEUE',
+      }),
+    );
+    const shipperId = id();
+
+    const available = await shipmentService.listForShipper(shipperId, {
+      scope: 'available',
+      page: 1,
+      limit: 10,
+    });
+    expect(available.items.map((shipment) => String(shipment._id))).toEqual(
+      expect.arrayContaining([
+        String(original._id),
+        String(replacementShipment._id),
+      ]),
+    );
+
+    await Shipment.updateOne(
+      { _id: replacementShipment._id },
+      { status: 'IN_TRANSIT', shipperId },
+    );
+    const mine = await shipmentService.listForShipper(shipperId, {
+      scope: 'mine',
+      page: 1,
+      limit: 10,
+    });
+    expect(mine.items.map((shipment) => String(shipment._id))).toContain(
+      String(replacementShipment._id),
+    );
+  });
+
   it('rejects duplicate replacement shipments for the same replacement', async () => {
     const replacement = await replacementDocument();
     await Shipment.create(replacementShipmentData(replacement));

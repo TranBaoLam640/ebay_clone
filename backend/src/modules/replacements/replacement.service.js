@@ -264,14 +264,26 @@ const terminalizeForRefund = async ({
       role,
       now,
     });
-    return transitionOrThrow({
-      id: replacement._id,
-      from: ['PROPOSED'],
-      filter: { inventoryClaimStatus: 'UNCLAIMED' },
+    const changed = await repository.transition(
+      replacement._id,
+      ['PROPOSED'],
       update,
       session,
-      staleMessage: 'Replacement can no longer switch to refund',
-    });
+      { inventoryClaimStatus: 'UNCLAIMED' },
+    );
+    if (changed) return changed;
+    const current = await repository.findById(replacement._id, session);
+    if (!current) throw notFound();
+    if (current.status === 'ACCEPTED')
+      return cancelAcceptedForRefund({
+        replacement: current,
+        userId,
+        session,
+        now,
+      });
+    if (REPLACEMENT_TERMINAL_STATUSES.includes(current.status))
+      throw invalidState('Terminal replacement cannot be changed');
+    throw invalidState('Replacement can no longer switch to refund');
   }
   if (replacement.status === 'ACCEPTED')
     return cancelAcceptedForRefund({ replacement, userId, session, now });

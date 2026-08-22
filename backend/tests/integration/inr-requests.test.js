@@ -1124,6 +1124,47 @@ describe('INR requests', () => {
     }
   });
 
+  it('serializes replacement accept vs seller refund without claimed inventory leaks', async () => {
+    const seller = await login('seller@example.test');
+    const request = await createOpenInr({ requestedResolution: 'WANT_ITEM' });
+    const proposal = await proposeReplacement(ids.sellerUser, request.id);
+
+    const [acceptResult, refundResponse] = await Promise.all([
+      acceptReplacement(ids.buyer, proposal.id).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (error) => ({ status: 'rejected', error }),
+      ),
+      mutate(seller, 'post', refundPath(request.id), {}, 'accept-vs-refund'),
+    ]);
+
+    const storedRequest = await models.INRRequest.findById(request.id).lean();
+    const storedReplacement = await models.Replacement.findById(
+      proposal.id,
+    ).lean();
+    const refund = await models.Refund.findOne({ sourceId: request.id }).lean();
+
+    expect(refundResponse.status).toBe(200);
+    expect(storedRequest.resolutionMode).toBe('REFUND');
+    expect(refund).toEqual(
+      expect.objectContaining({
+        status: 'COMPLETED',
+        sourceType: 'INR',
+      }),
+    );
+    expect(storedReplacement.status).not.toBe('ACCEPTED');
+    expect(storedReplacement.status).toMatch(/CANCELLED|DECLINED/);
+    expect(storedReplacement.inventoryClaimStatus).not.toBe('CLAIMED');
+    expect(storedReplacement.inventoryClaimStatus).toMatch(
+      /RELEASED|UNCLAIMED/,
+    );
+    expect(await stock()).toBe(5);
+
+    if (acceptResult.status === 'fulfilled') {
+      expect(storedReplacement.status).toBe('CANCELLED');
+      expect(storedReplacement.inventoryClaimStatus).toBe('RELEASED');
+    }
+  });
+
   it('serializes buyer refund-instead vs replacement pickup into one valid branch', async () => {
     const buyer = await login();
     const request = await createOpenInr({ requestedResolution: 'WANT_ITEM' });

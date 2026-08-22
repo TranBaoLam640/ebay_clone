@@ -559,62 +559,78 @@ export const cancel = (userId, id, input = {}, { now = new Date() } = {}) =>
     return view(cancelled);
   });
 
-export const prepareShipment = (userId, id, { now = new Date() } = {}) =>
-  checkoutRepository.transaction(async (session) => {
-    const { replacement, role } = await loadActionContext(userId, id, session);
-    assertSellerOwnsReplacement(replacement, role);
-    await ensureReplacementMode(replacement, session);
+const existingPreparedShipment = async (userId, id, session) => {
+  const { replacement, role } = await loadActionContext(userId, id, session);
+  assertSellerOwnsReplacement(replacement, role);
+  await ensureReplacementMode(replacement, session);
+  const shipment = await shipmentRepository.findByReplacementId(
+    replacement._id,
+    session,
+  );
+  if (!shipment) return null;
+  return {
+    replacement: view(replacement),
+    shipment: shipmentRepository.toPublic(shipment),
+  };
+};
 
-    const existingShipment = await shipmentRepository.findByReplacementId(
-      replacement._id,
-      session,
-    );
-    if (existingShipment)
-      return {
-        replacement: view(replacement),
-        shipment: shipmentRepository.toPublic(existingShipment),
-      };
+export const prepareShipment = async (
+  userId,
+  id,
+  { now = new Date() } = {},
+) => {
+  try {
+    return await checkoutRepository.transaction(async (session) => {
+      const existing = await existingPreparedShipment(userId, id, session);
+      if (existing) return existing;
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const shipment = await shipmentRepository.create(
-          {
-            orderId: replacement.orderId,
-            replacementId: replacement._id,
-            buyerId: replacement.buyerId,
-            sellerId: replacement.sellerId,
-            purpose: 'REPLACEMENT',
-            shipperId: null,
-            carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
-            trackingNumber: generateTrackingNumber(),
-            status: 'READY_FOR_PICKUP',
-            estimatedDeliveryAt: estimatedDeliveryAt(now),
-          },
-          session,
-        );
-        return {
-          replacement: view(replacement),
-          shipment: shipmentRepository.toPublic(shipment),
-        };
-      } catch (error) {
-        if (duplicateReplacementShipment(error)) {
-          const shipment = await shipmentRepository.findByReplacementId(
-            replacement._id,
+      const { replacement } = await loadActionContext(userId, id, session);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const shipment = await shipmentRepository.create(
+            {
+              orderId: replacement.orderId,
+              replacementId: replacement._id,
+              buyerId: replacement.buyerId,
+              sellerId: replacement.sellerId,
+              purpose: 'REPLACEMENT',
+              shipperId: null,
+              carrier: SHIPMENT_CARRIERS.SBAY_EXPRESS,
+              trackingNumber: generateTrackingNumber(),
+              status: 'READY_FOR_PICKUP',
+              estimatedDeliveryAt: estimatedDeliveryAt(now),
+            },
             session,
           );
-          if (shipment)
-            return {
-              replacement: view(replacement),
-              shipment: shipmentRepository.toPublic(shipment),
-            };
-          throw invalidState('Replacement shipment already exists');
+          return {
+            replacement: view(replacement),
+            shipment: shipmentRepository.toPublic(shipment),
+          };
+        } catch (error) {
+          if (duplicateReplacementShipment(error)) {
+            const existing = await existingPreparedShipment(
+              userId,
+              id,
+              session,
+            );
+            if (existing) return existing;
+            throw invalidState('Replacement shipment already exists');
+          }
+          if (duplicateTracking(error) && attempt < 2) continue;
+          throw error;
         }
-        if (duplicateTracking(error) && attempt < 2) continue;
-        throw error;
       }
-    }
-    throw new Error('Shipment tracking number generation failed');
-  });
+      throw new Error('Shipment tracking number generation failed');
+    });
+  } catch (error) {
+    if (!duplicateReplacementShipment(error)) throw error;
+    const existing = await checkoutRepository.transaction((session) =>
+      existingPreparedShipment(userId, id, session),
+    );
+    if (existing) return existing;
+    throw invalidState('Replacement shipment already exists');
+  }
+};
 
 export const terminalizeForOriginalItemArrived = async ({
   request,

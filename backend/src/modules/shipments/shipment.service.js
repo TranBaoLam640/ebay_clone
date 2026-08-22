@@ -8,6 +8,10 @@ import * as checkoutRepository from '../checkout/checkout.repository.js';
 import * as inrRepository from '../inr-requests/inr-request.repository.js';
 import * as notificationService from '../notifications/service.js';
 import * as orderRepository from '../orders/order.repository.js';
+import {
+  notifyReplacementDelivered,
+  notifyReplacementInTransit,
+} from '../replacements/replacement.notifications.js';
 import * as replacementRepository from '../replacements/replacement.repository.js';
 import { emitReplacementUpdate } from '../replacements/replacement-events.js';
 import * as sellerRepository from '../sellers/seller.repository.js';
@@ -166,6 +170,7 @@ export const pickup = async (shipperId, shipmentId) => {
       );
       if (!request)
         throw invalidState('Replacement resolution is no longer active');
+      await notifyReplacementInTransit(replacement, session);
       replacementId = replacement._id;
     }
     return claimed;
@@ -209,8 +214,14 @@ export const deliver = async (shipperId, shipmentId) => {
         session,
       );
     }
-    if (existing.purpose === 'REPLACEMENT')
+    if (existing.purpose === 'REPLACEMENT') {
+      const replacement = await replacementRepository.findById(
+        existing.replacementId,
+        session,
+      );
+      if (replacement) await notifyReplacementDelivered(replacement, session);
       replacementId = existing.replacementId;
+    }
     return delivered;
   });
   if (replacementId) await emitReplacementUpdate(replacementId);

@@ -15,6 +15,13 @@ import {
   REPLACEMENT_ACTIVE_KEY,
   REPLACEMENT_TERMINAL_STATUSES,
 } from './replacement.constants.js';
+import {
+  notifyRefundInsteadRequested,
+  notifyReplacementAccepted,
+  notifyReplacementCancelled,
+  notifyReplacementDeclined,
+  notifyReplacementProposed,
+} from './replacement.notifications.js';
 import * as repository from './replacement.repository.js';
 
 const notFound = () =>
@@ -357,6 +364,7 @@ export const proposeInSession = async (userId, input, session) => {
       },
       session,
     );
+    await notifyReplacementProposed(created, session);
     return view(created.toObject());
   } catch (error) {
     if (duplicateActive(error))
@@ -399,6 +407,7 @@ export const accept = (userId, id, { now = new Date() } = {}) =>
       session,
       staleMessage: 'Replacement is no longer proposed',
     });
+    await notifyReplacementAccepted(accepted, session);
     return view(accepted);
   });
 
@@ -430,6 +439,7 @@ export const decline = (userId, id, input = {}, { now = new Date() } = {}) =>
       staleMessage: 'Replacement is no longer proposed',
     });
     await releaseReplacementMode(replacement, session, now);
+    await notifyReplacementDeclined(declined, session);
     return view(declined);
   });
 
@@ -494,6 +504,7 @@ export const cancel = (userId, id, input = {}, { now = new Date() } = {}) =>
       staleMessage: 'Replacement cannot be cancelled',
     });
     await releaseReplacementMode(replacement, session, now);
+    await notifyReplacementCancelled(cancelled, role, session);
     return view(cancelled);
   });
 
@@ -573,6 +584,7 @@ export const requestRefundInstead = (
     );
     if (!updatedRequest)
       throw invalidState('INR could not switch to refund resolution');
+    await notifyRefundInsteadRequested(updatedRequest, session);
     return { request: updatedRequest, replacement: view(switched) };
   });
 

@@ -202,6 +202,9 @@ beforeAll(async () => {
     ).Replacement,
     Shipment: (await import('../../src/modules/shipments/shipment.model.js'))
       .Shipment,
+    Notification: (
+      await import('../../src/modules/notifications/notification.model.js')
+    ).Notification,
     Message: (await import('../../src/modules/conversations/message.model.js'))
       .Message,
   };
@@ -1361,6 +1364,21 @@ describe('buyer/seller messaging', () => {
         }),
       }),
     );
+    const buyerNotifications = await buyer.agent
+      .get(`${prefix}/notifications`)
+      .expect(200);
+    expect(buyerNotifications.body.data).toEqual([
+      expect.objectContaining({
+        type: 'DISPUTE',
+        title: 'Replacement offered',
+        referenceType: 'INRRequest',
+        referenceId: String(inr._id),
+      }),
+    ]);
+    const sellerNotifications = await seller.agent
+      .get(`${prefix}/notifications`)
+      .expect(200);
+    expect(sellerNotifications.body.data).toEqual([]);
     await models.Replacement.updateOne(
       { _id: sellerProposal.body.data.replacement.id },
       {

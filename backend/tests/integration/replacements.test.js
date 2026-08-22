@@ -225,6 +225,9 @@ const expectStatus = async (promise, status) => {
 const productStock = async () =>
   (await models.Product.findById(ids.product).select('stock').lean()).stock;
 
+const notifications = (filter = {}) =>
+  models.Notification.find(filter).sort({ createdAt: 1, _id: 1 }).lean();
+
 const acceptedReplacement = async () => {
   const proposal = await proposeBuyer();
   return service.accept(ids.sellerUser, proposal.id);
@@ -250,6 +253,7 @@ beforeAll(async () => {
     import('../../src/modules/inr-requests/inr-request.model.js'),
     import('../../src/modules/replacements/replacement.model.js'),
     import('../../src/modules/shipments/shipment.model.js'),
+    import('../../src/modules/notifications/notification.model.js'),
     import('../../src/modules/replacements/replacement.service.js'),
     import('../../src/modules/shipments/shipment.service.js'),
     import('../../src/modules/products/product.repository.js'),
@@ -264,11 +268,12 @@ beforeAll(async () => {
     INRRequest: modules[5].INRRequest,
     Replacement: modules[6].Replacement,
     Shipment: modules[7].Shipment,
+    Notification: modules[8].Notification,
   };
-  service = modules[8];
-  shipmentService = modules[9];
-  productRepository = modules[10];
-  replacementRepository = modules[11];
+  service = modules[9];
+  shipmentService = modules[10];
+  productRepository = modules[11];
+  replacementRepository = modules[12];
   await Promise.all(Object.values(models).map((model) => model.init()));
 });
 
@@ -339,6 +344,56 @@ describe('replacement domain foundation', () => {
     );
   });
 
+  it('notifies only the counterparty when a replacement is proposed', async () => {
+    const buyerProposal = await proposeBuyer();
+    let proposed = await notifications({
+      eventType: 'REPLACEMENT_PROPOSED',
+    });
+    expect(proposed).toHaveLength(1);
+    expect(proposed[0]).toEqual(
+      expect.objectContaining({
+        userId: ids.sellerUser,
+        type: 'DISPUTE',
+        title: 'Replacement requested',
+        referenceType: 'INRRequest',
+        referenceId: ids.inr,
+        eventKey: `REPLACEMENT_PROPOSED:${buyerProposal.id}:SELLER`,
+      }),
+    );
+    expect(
+      await models.Notification.countDocuments({
+        userId: ids.buyer,
+        eventType: 'REPLACEMENT_PROPOSED',
+      }),
+    ).toBe(0);
+
+    await service.decline(ids.sellerUser, buyerProposal.id);
+    const duplicateDecline = await service
+      .decline(ids.sellerUser, buyerProposal.id)
+      .catch((error) => error);
+    expect(duplicateDecline.status).toBe(409);
+    await models.INRRequest.updateOne(
+      { _id: ids.inr },
+      { resolutionMode: 'NONE' },
+    );
+    const sellerProposal = await proposeSeller();
+    proposed = await notifications({ eventType: 'REPLACEMENT_PROPOSED' });
+    expect(proposed).toHaveLength(2);
+    expect(proposed[1]).toEqual(
+      expect.objectContaining({
+        userId: ids.buyer,
+        title: 'Replacement offered',
+        referenceId: ids.inr,
+        eventKey: `REPLACEMENT_PROPOSED:${sellerProposal.id}:BUYER`,
+      }),
+    );
+    expect(
+      await models.Notification.countDocuments({
+        eventType: 'REPLACEMENT_DECLINED',
+      }),
+    ).toBe(1);
+  });
+
   it('rejects unrelated owners, closed INR, and mismatched transaction input', async () => {
     await expectStatus(service.propose(ids.otherBuyer, proposalInput()), 403);
     await expectStatus(service.propose(ids.sellerUser2, proposalInput()), 403);
@@ -371,6 +426,19 @@ describe('replacement domain foundation', () => {
     await expectStatus(service.accept(ids.otherBuyer, buyerProposal.id), 403);
 
     const accepted = await service.accept(ids.sellerUser, buyerProposal.id);
+    let acceptedNotifications = await notifications({
+      eventType: 'REPLACEMENT_ACCEPTED',
+    });
+    expect(acceptedNotifications).toHaveLength(1);
+    expect(acceptedNotifications[0]).toEqual(
+      expect.objectContaining({
+        userId: ids.buyer,
+        title: 'Replacement accepted',
+        referenceType: 'INRRequest',
+        referenceId: ids.inr,
+        eventKey: `REPLACEMENT_ACCEPTED:${buyerProposal.id}:BUYER`,
+      }),
+    );
     expect(accepted).toEqual(
       expect.objectContaining({
         status: 'ACCEPTED',
@@ -391,6 +459,16 @@ describe('replacement domain foundation', () => {
     const sellerProposal = await proposeSeller();
     await expectStatus(service.accept(ids.sellerUser, sellerProposal.id), 403);
     const buyerAccepted = await service.accept(ids.buyer, sellerProposal.id);
+    acceptedNotifications = await notifications({
+      eventType: 'REPLACEMENT_ACCEPTED',
+    });
+    expect(acceptedNotifications).toHaveLength(2);
+    expect(acceptedNotifications[1]).toEqual(
+      expect.objectContaining({
+        userId: ids.sellerUser,
+        eventKey: `REPLACEMENT_ACCEPTED:${sellerProposal.id}:SELLER`,
+      }),
+    );
     expect(buyerAccepted).toEqual(
       expect.objectContaining({
         status: 'ACCEPTED',
@@ -550,6 +628,19 @@ describe('replacement domain foundation', () => {
       reason: 'NO_STOCK',
       note: 'Cannot replace this item yet',
     });
+    const declinedNotifications = await notifications({
+      eventType: 'REPLACEMENT_DECLINED',
+    });
+    expect(declinedNotifications).toHaveLength(1);
+    expect(declinedNotifications[0]).toEqual(
+      expect.objectContaining({
+        userId: ids.buyer,
+        title: 'Replacement declined',
+        referenceType: 'INRRequest',
+        referenceId: ids.inr,
+        eventKey: `REPLACEMENT_DECLINED:${buyerProposal.id}:BUYER`,
+      }),
+    );
     expect(declined).toEqual(
       expect.objectContaining({
         status: 'DECLINED',
@@ -570,6 +661,18 @@ describe('replacement domain foundation', () => {
     const buyerCancelled = await service.cancel(ids.buyer, buyerProposal.id, {
       reason: 'WITHDRAWN',
     });
+    let cancelledNotifications = await notifications({
+      eventType: 'REPLACEMENT_CANCELLED',
+    });
+    expect(cancelledNotifications).toHaveLength(1);
+    expect(cancelledNotifications[0]).toEqual(
+      expect.objectContaining({
+        userId: ids.sellerUser,
+        title: 'Replacement cancelled',
+        referenceId: ids.inr,
+        eventKey: `REPLACEMENT_CANCELLED:${buyerProposal.id}:SELLER`,
+      }),
+    );
     expect(await productStock()).toBe(5);
     expect(buyerCancelled).toEqual(
       expect.objectContaining({
@@ -590,6 +693,16 @@ describe('replacement domain foundation', () => {
       ids.sellerUser,
       sellerProposal.id,
       { reason: 'WITHDRAWN' },
+    );
+    cancelledNotifications = await notifications({
+      eventType: 'REPLACEMENT_CANCELLED',
+    });
+    expect(cancelledNotifications).toHaveLength(2);
+    expect(cancelledNotifications[1]).toEqual(
+      expect.objectContaining({
+        userId: ids.buyer,
+        eventKey: `REPLACEMENT_CANCELLED:${sellerProposal.id}:BUYER`,
+      }),
     );
     expect(await productStock()).toBe(5);
     expect(sellerCancelled).toEqual(
@@ -645,6 +758,16 @@ describe('replacement domain foundation', () => {
       sellerProposalBuyerCancels.id,
       { note: 'Buyer wants refund path later' },
     );
+    let cancelledNotifications = await notifications({
+      eventType: 'REPLACEMENT_CANCELLED',
+    });
+    expect(cancelledNotifications).toHaveLength(1);
+    expect(cancelledNotifications[0]).toEqual(
+      expect.objectContaining({
+        userId: ids.sellerUser,
+        eventKey: `REPLACEMENT_CANCELLED:${sellerProposalBuyerCancels.id}:SELLER`,
+      }),
+    );
     expect(await productStock()).toBe(5);
     expect(buyerCancelledSellerProposal).toEqual(
       expect.objectContaining({
@@ -666,6 +789,16 @@ describe('replacement domain foundation', () => {
       ids.sellerUser,
       sellerProposalSellerCancels.id,
       { note: 'Seller cannot fulfill later' },
+    );
+    cancelledNotifications = await notifications({
+      eventType: 'REPLACEMENT_CANCELLED',
+    });
+    expect(cancelledNotifications).toHaveLength(2);
+    expect(cancelledNotifications[1]).toEqual(
+      expect.objectContaining({
+        userId: ids.buyer,
+        eventKey: `REPLACEMENT_CANCELLED:${sellerProposalSellerCancels.id}:BUYER`,
+      }),
     );
     expect(await productStock()).toBe(5);
     expect(sellerCancelledSellerProposal).toEqual(
@@ -886,6 +1019,44 @@ describe('replacement domain foundation', () => {
     expect(await productStock()).toBe(5);
   });
 
+  it('notifies seller for refund-instead without a duplicate replacement cancellation notice', async () => {
+    const accepted = await acceptedReplacement();
+    const result = await service.requestRefundInstead(ids.buyer, ids.inr);
+
+    expect(result.request).toEqual(
+      expect.objectContaining({
+        requestedResolution: 'REFUND',
+        resolutionMode: 'REFUND',
+      }),
+    );
+    expect(await notifications({ eventType: 'INR_REFUND_REQUESTED' })).toEqual([
+      expect.objectContaining({
+        userId: ids.sellerUser,
+        type: 'DISPUTE',
+        title: 'Refund requested',
+        message: 'The buyer wants a refund instead of the replacement.',
+        referenceType: 'INRRequest',
+        referenceId: ids.inr,
+        eventKey: `INR_REFUND_REQUESTED:${ids.inr}:SELLER`,
+      }),
+    ]);
+    expect(
+      await models.Notification.countDocuments({
+        eventType: 'REPLACEMENT_CANCELLED',
+        eventKey: `REPLACEMENT_CANCELLED:${accepted.id}:SELLER`,
+      }),
+    ).toBe(0);
+
+    await expect(
+      service.requestRefundInstead(ids.buyer, ids.inr),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(
+      await models.Notification.countDocuments({
+        eventType: 'INR_REFUND_REQUESTED',
+      }),
+    ).toBe(1);
+  });
+
   it('restores stock once under duplicate prepared replacement cancellation', async () => {
     const accepted = await acceptedReplacement();
     await service.prepareShipment(ids.sellerUser, accepted.id);
@@ -930,6 +1101,17 @@ describe('replacement domain foundation', () => {
     expect(storedReplacement.status).toBe('FULFILLING');
     expect(storedReplacement.inventoryClaimStatus).toBe('CONSUMED');
     expect(await productStock()).toBe(3);
+    expect(
+      await notifications({ eventType: 'REPLACEMENT_IN_TRANSIT' }),
+    ).toEqual([
+      expect.objectContaining({
+        userId: ids.buyer,
+        title: 'Replacement shipped',
+        referenceType: 'INRRequest',
+        referenceId: ids.inr,
+        eventKey: `REPLACEMENT_IN_TRANSIT:${accepted.id}:BUYER`,
+      }),
+    ]);
   });
 
   it('makes duplicate replacement pickup stale-safe without extra stock mutation', async () => {
@@ -953,6 +1135,11 @@ describe('replacement domain foundation', () => {
         inventoryClaimStatus: 'CONSUMED',
       }),
     );
+    expect(
+      await models.Notification.countDocuments({
+        eventType: 'REPLACEMENT_IN_TRANSIT',
+      }),
+    ).toBe(1);
   });
 
   it('serializes cancel vs pickup races into one valid branch', async () => {
@@ -994,6 +1181,9 @@ describe('replacement domain foundation', () => {
     await shipmentService.pickup(ids.sellerUser2, shipment._id);
 
     await expectStatus(service.cancel(ids.buyer, accepted.id), 409);
+    await expect(
+      service.requestRefundInstead(ids.buyer, ids.inr),
+    ).rejects.toMatchObject({ status: 409 });
 
     expect(await service.findById(accepted.id)).toEqual(
       expect.objectContaining({
@@ -1005,6 +1195,11 @@ describe('replacement domain foundation', () => {
       'IN_TRANSIT',
     );
     expect(await productStock()).toBe(3);
+    expect(
+      await models.Notification.countDocuments({
+        eventType: 'INR_REFUND_REQUESTED',
+      }),
+    ).toBe(0);
   });
 
   it('delivers replacement shipments without completing the order, INR, or replacement', async () => {
@@ -1029,6 +1224,17 @@ describe('replacement domain foundation', () => {
     expect(storedInr.status).toBe('OPEN');
     expect(storedOrder.orderStatus).toBe('CONFIRMED');
     expect(await productStock()).toBe(3);
+    expect(await notifications({ eventType: 'REPLACEMENT_DELIVERED' })).toEqual(
+      [
+        expect.objectContaining({
+          userId: ids.buyer,
+          title: 'Replacement delivered',
+          referenceType: 'INRRequest',
+          referenceId: ids.inr,
+          eventKey: `REPLACEMENT_DELIVERED:${accepted.id}:BUYER`,
+        }),
+      ],
+    );
   });
 
   it('rejects duplicate replacement delivery without duplicate side effects', async () => {
@@ -1053,6 +1259,11 @@ describe('replacement domain foundation', () => {
       'CONFIRMED',
     );
     expect(await productStock()).toBe(3);
+    expect(
+      await models.Notification.countDocuments({
+        eventType: 'REPLACEMENT_DELIVERED',
+      }),
+    ).toBe(1);
   });
 
   it('protects terminal states from later mutation', async () => {

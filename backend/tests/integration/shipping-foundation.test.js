@@ -6,6 +6,7 @@ import request from 'supertest';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { accessCookie } from '../../src/config/cookies.js';
 import { USER_STATUS } from '../../src/common/constants/user-status.js';
+import { USER4_NOTIFICATION_EVENTS } from '../../src/common/constants/user4-notification-events.js';
 import { errorHandler } from '../../src/common/middleware/error-handler.js';
 import { authenticate } from '../../src/common/middleware/authenticate.js';
 import { authorize } from '../../src/common/middleware/authorize.js';
@@ -441,8 +442,28 @@ describe('shipping backend foundation', () => {
     const unchangedOrder = await Order.findById(order._id).lean();
     expect(unchangedOrder.orderStatus).toBe('CONFIRMED');
     expect(unchangedOrder.deliveredAt).toBeUndefined();
-    expect(await Notification.countDocuments({ userId: order.buyerId })).toBe(
-      0,
+    expect(
+      await Notification.countDocuments({
+        userId: order.buyerId,
+        eventType: USER4_NOTIFICATION_EVENTS.SHIPMENT_DELIVERED,
+      }),
+    ).toBe(0);
+    expect(
+      await Notification.countDocuments({
+        userId: order.buyerId,
+        eventType: USER4_NOTIFICATION_EVENTS.REPLACEMENT_DELIVERED,
+      }),
+    ).toBe(1);
+    expect(
+      await Notification.findOne({
+        userId: order.buyerId,
+        eventType: USER4_NOTIFICATION_EVENTS.REPLACEMENT_DELIVERED,
+      }).lean(),
+    ).toEqual(
+      expect.objectContaining({
+        referenceType: 'INRRequest',
+        referenceId: replacement.inrRequestId,
+      }),
     );
   });
 

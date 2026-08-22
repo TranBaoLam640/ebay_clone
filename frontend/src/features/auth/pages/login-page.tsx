@@ -6,14 +6,14 @@ import { Button } from '@/components/button';
 import { useAuth } from '../hooks/use-auth';
 import { messageFromError } from '../utils/auth-errors';
 import { ApiError } from '@/services/types';
-import { paths } from '@/routes/paths';
+import { defaultPathForRole, paths } from '@/routes/paths';
 
 export default function LoginPage() {
   const { t } = useTranslation();
-  const { login } = useAuth();
+  const { login, refetchMe } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? paths.home;
+  const from = (location.state as { from?: string } | null)?.from;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,7 +24,8 @@ export default function LoginPage() {
     setError(null);
     try {
       await login.mutateAsync({ email, password });
-      navigate(from, { replace: true });
+      const me = await refetchMe();
+      navigate(from ?? defaultPathForRole(me.data?.role), { replace: true });
     } catch (err) {
       // Email not verified → route the user to the OTP step.
       if (err instanceof ApiError && err.code === 'EMAIL_NOT_VERIFIED') {

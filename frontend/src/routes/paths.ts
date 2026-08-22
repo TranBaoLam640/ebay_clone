@@ -1,4 +1,6 @@
 /** Central route path definitions. Keeps links type-safe and refactorable. */
+import type { UserRole } from '@/features/auth/types/auth.types';
+
 export const paths = {
   home: '/',
   products: '/products',
@@ -33,3 +35,6 @@ export const paths = {
     shipments: '/shipper/shipments',
   },
 } as const;
+
+export const defaultPathForRole = (role?: UserRole | null) =>
+  role === 'SHIPPER' ? paths.shipper.shipments : paths.home;

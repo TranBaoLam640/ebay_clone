@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { lazy, Suspense, type ReactNode } from 'react';
 import { RootLayout } from '@/layouts/root-layout';
 import { AuthLayout } from '@/layouts/auth-layout';
@@ -6,6 +6,8 @@ import { AccountLayout } from '@/layouts/account-layout';
 import { ProtectedRoute } from './protected-route';
 import { RouteErrorPage } from '@/features/misc/route-error-page';
 import { Icon } from '@/components/icon';
+import { useAuth } from '@/features/auth/hooks/use-auth';
+import { defaultPathForRole } from './paths';
 
 // Lazily load pages so the initial bundle stays lean.
 const HomePage = lazy(() => import('@/features/catalog/pages/home-page'));
@@ -50,12 +52,28 @@ function Lazy({ children }: { children: ReactNode }) {
   );
 }
 
+function HomeRoute() {
+  const { user, isLoading } = useAuth();
+  const defaultPath = defaultPathForRole(user?.role);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted">
+        <Icon variant="icon-loading" size={28} spin />
+      </div>
+    );
+  }
+
+  if (defaultPath !== '/') return <Navigate to={defaultPath} replace />;
+  return <Lazy><HomePage /></Lazy>;
+}
+
 export const router = createBrowserRouter([
   {
     element: <RootLayout />,
     errorElement: <RouteErrorPage />,
     children: [
-      { path: '/', element: <Lazy><HomePage /></Lazy> },
+      { path: '/', element: <HomeRoute /> },
       { path: '/products', element: <Lazy><ProductListPage /></Lazy> },
       { path: '/products/:productId', element: <Lazy><ProductDetailPage /></Lazy> },
       { path: '/sellers/:sellerId', element: <Lazy><SellerPage /></Lazy> },

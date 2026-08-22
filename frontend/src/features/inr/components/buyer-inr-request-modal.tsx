@@ -50,7 +50,7 @@ export function BuyerInrRequestModal({
     if (Date.now() <= eligibleAt) {
       return {
         eligible: false,
-        message: `You can open this request ${INR_OPEN_DELAY_MINUTES} minutes after the estimated delivery time: ${formatDateTime(order.shipment.estimatedDeliveryAt)}.`,
+        message: `You can open this request at ${formatDateTime(new Date(eligibleAt).toISOString())}, ${INR_OPEN_DELAY_MINUTES} minutes after the estimated delivery time.`,
       };
     }
     const windowEnd = eta.getTime() + 30 * 86_400_000;
